@@ -1,0 +1,73 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1220; color: #fff; font-family: 'Russo One', system-ui, sans-serif; touch-action: none; user-select: none; -webkit-user-select: none; }
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; transition: filter .6s; }
+.hidden { display: none !important; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#topright { position: absolute; top: 14px; right: 16px; text-align: right; }
+#stars { font-size: 30px; letter-spacing: 2px; text-shadow: 0 0 3px #000, 2px 2px 0 #000; }
+#stars span { color: rgba(255,255,255,.18); }
+#stars span.on { color: #fff; }
+#stars.flash span.on { animation: blink .5s steps(2) infinite; }
+@keyframes blink { 50% { color: #ffd34d; } }
+#money { font-family: 'Press Start 2P', monospace; font-size: 22px; color: #6dd36a; text-shadow: 3px 3px 0 #000, -1px -1px 0 #000; margin-top: 6px; }
+#hpbar { width: 180px; height: 10px; background: rgba(0,0,0,.6); border: 2px solid #000; margin: 8px 0 0 auto; }
+#hp { height: 100%; width: 100%; background: #4cc24c; transition: width .2s; }
+
+#minimap { position: absolute; left: 16px; bottom: 16px; width: 180px; height: 180px; border-radius: 50%; border: 4px solid rgba(0,0,0,.75); box-shadow: 0 2px 10px rgba(0,0,0,.5); background: #000; }
+#crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 22px; color: #fff; text-shadow: 0 0 3px #000; font-family: monospace; }
+#hotbar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; padding: 4px; background: rgba(0,0,0,.45); border: 2px solid rgba(0,0,0,.7); pointer-events: auto; }
+#hotbar .slot { width: 44px; height: 44px; border: 3px solid #555; background: #8b8b8b; position: relative; cursor: pointer; }
+#hotbar .slot.sel { border-color: #fff; box-shadow: 0 0 0 2px #000; }
+#hotbar .slot canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+#hotbar .slot i { position: absolute; left: 2px; top: 0; font-style: normal; font-size: 10px; font-family: 'Press Start 2P', monospace; text-shadow: 1px 1px 0 #000; }
+#toast { position: absolute; top: 18%; left: 50%; transform: translateX(-50%); font-size: 22px; text-shadow: 2px 2px 0 #000; opacity: 0; transition: opacity .3s; text-align: center; white-space: nowrap; }
+#toast.show { opacity: 1; }
+#big { position: absolute; top: 40%; left: 50%; transform: translate(-50%,-50%); font-family: 'Russo One', sans-serif; font-size: clamp(40px, 10vw, 96px); text-shadow: 4px 4px 0 #000; opacity: 0; transition: opacity .4s; white-space: nowrap; }
+#big.show { opacity: 1; }
+#carhint { position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%); font-size: 16px; background: rgba(0,0,0,.55); padding: 6px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; white-space: nowrap; }
+#carhint.show { opacity: 1; }
+#radio { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 18px; color: #ffd34d; text-shadow: 2px 2px 0 #000; opacity: 0; transition: opacity .5s; }
+#radio.show { opacity: 1; }
+
+#pause { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; font-size: 26px; text-shadow: 2px 2px 0 #000; cursor: pointer; }
+
+#menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: linear-gradient(180deg, rgba(10,14,30,.15), rgba(10,14,30,.7)); overflow-y: auto; }
+#menubox { max-width: 560px; width: 100%; text-align: center; background: rgba(0,0,0,.55); border: 3px solid #000; padding: 22px 18px; border-radius: 10px; }
+#menu h1 { font-family: 'Press Start 2P', monospace; font-size: clamp(26px, 7vw, 46px); margin: 6px 0 10px; color: #ffd34d; text-shadow: 4px 4px 0 #b3412b, 7px 7px 0 #000; }
+.sub { margin: 0 0 16px; color: #dfe7ff; }
+#play { font-family: 'Press Start 2P', monospace; font-size: 18px; padding: 16px 30px; background: #4cc24c; color: #fff; border: 3px solid #000; box-shadow: 0 5px 0 #23701f; cursor: pointer; text-shadow: 2px 2px 0 #000; border-radius: 4px; }
+#play:disabled { background: #666; box-shadow: 0 5px 0 #333; cursor: wait; }
+#play:not(:disabled):hover { filter: brightness(1.1); }
+#controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; text-align: left; margin: 18px 0 8px; font-size: 13px; color: #cfd8f0; }
+#controls b { color: #ffd34d; }
+.tip { font-size: 13px; color: #ffd9a8; }
+#best { font-size: 13px; color: #6dd36a; margin: 0; }
+body.touch #controls { display: none; }
+
+#touch { position: fixed; inset: 0; pointer-events: none; }
+#joy { position: absolute; left: 24px; bottom: 30px; width: 130px; height: 130px; border-radius: 50%; background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.3); }
+#joyknob { position: absolute; left: 40px; top: 40px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.45); }
+.tb { position: absolute; pointer-events: auto; width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,.45); background: rgba(0,0,0,.35); color: #fff; font-size: 26px; padding: 0; }
+.tb:active { background: rgba(255,255,255,.3); }
+.tb.small { width: 46px; height: 46px; font-size: 20px; }
+#tb-jump { right: 22px; bottom: 96px; }
+#tb-car { right: 96px; bottom: 170px; }
+#tb-break { right: 96px; bottom: 30px; }
+#tb-place { right: 22px; bottom: 170px; }
+#tb-view { right: 16px; top: 120px; }
+body.touch #minimap { left: 12px; top: 12px; bottom: auto; width: 120px; height: 120px; }
+body.touch #hotbar { bottom: 244px; }
+body.touch #hotbar .slot { width: 32px; height: 32px; }
+body.touch #topright { top: 60px; }
+body.touch #stars { font-size: 22px; }
+body.touch #money { font-size: 15px; }
+body.touch #hpbar { width: 120px; }
+body.touch #carhint { bottom: 210px; }
+@media (max-width: 600px) { #controls { grid-template-columns: 1fr; } }
+body.touch #toast { font-size: 15px; white-space: normal; width: 80vw; top: 24%; }
+body.touch #tb-view { top: auto; right: 176px; bottom: 36px; }
+@media (orientation: landscape) {
+  body.touch #hotbar { bottom: auto; top: 8px; }
+  body.touch #topright { top: 10px; }
+}

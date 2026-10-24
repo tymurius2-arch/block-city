@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Блок-Сити</title>
+<meta name="description" content="Блок-Сити — город из кубиков: угоняй машины, уходи от полиции, ломай и строй блоки.">
+<meta property="og:title" content="Блок-Сити">
+<meta property="og:description" content="Город из кубиков: угоняй машины, уходи от полиции, ломай и строй блоки.">
+<meta property="og:image" content="assets/cover.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Russo+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="topright">
+    <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
+    <div id="money">$00000000</div>
+    <div id="hpbar"><div id="hp"></div></div>
+  </div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="crosshair">+</div>
+  <div id="hotbar"></div>
+  <div id="toast"></div>
+  <div id="big"></div>
+  <div id="carhint"></div>
+  <div id="radio"></div>
+</div>
+
+<div id="touch" class="hidden">
+  <div id="joy"><div id="joyknob"></div></div>
+  <button class="tb" id="tb-jump">⤒</button>
+  <button class="tb" id="tb-car">🚗</button>
+  <button class="tb" id="tb-break">⛏</button>
+  <button class="tb" id="tb-place">🧱</button>
+  <button class="tb small" id="tb-view">👁</button>
+</div>
+
+<div id="pause" class="hidden"><div>Нажми, чтобы продолжить</div></div>
+
+<div id="menu">
+  <div id="menubox">
+    <h1>БЛОК-СИТИ</h1>
+    <p class="sub">город из кубиков, где всё можно угнать, сломать и построить</p>
+    <button id="play" disabled>Загрузка…</button>
+    <div id="controls">
+      <div><b>WASD</b> — ходить / ехать</div>
+      <div><b>Мышь</b> — смотреть</div>
+      <div><b>Пробел</b> — прыжок / ручник</div>
+      <div><b>Shift</b> — бег</div>
+      <div><b>F</b> — сесть в машину / выйти</div>
+      <div><b>ЛКМ</b> — ломать блок / ударить</div>
+      <div><b>ПКМ</b> — поставить блок</div>
+      <div><b>1–9, колесо</b> — выбрать блок</div>
+      <div><b>V</b> — вид от 1-го / 3-го лица</div>
+      <div><b>H</b> — гудок, <b>M</b> — радио</div>
+    </div>
+    <p class="tip">Собирай деньги ($), грабь золото в банках, взрывай динамит. Чем больше хулиганишь — тем больше звёзд и полиции!</p>
+    <p id="best"></p>
+  </div>
+</div>
+
+<script type="module" src="game.js"></script>
+</body>
+</html>
