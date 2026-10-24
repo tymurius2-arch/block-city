@@ -13,7 +13,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Russo+One&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+} }
 </script>
 </head>
 <body>
@@ -24,6 +27,7 @@
     <div id="stars"><span>★</span><span>★</span><span>★</span><span>★</span><span>★</span></div>
     <div id="money">$00000000</div>
     <div id="hpbar"><div id="hp"></div></div>
+    <div id="carbar" class="hidden"><span>🚗</span><div><div id="carhp"></div></div></div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="crosshair">+</div>

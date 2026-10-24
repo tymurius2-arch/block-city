@@ -71,3 +71,7 @@ body.touch #tb-view { top: auto; right: 176px; bottom: 36px; }
   body.touch #hotbar { bottom: auto; top: 8px; }
   body.touch #topright { top: 10px; }
 }
+#carbar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 6px; font-size: 14px; }
+#carbar > div { width: 150px; height: 8px; background: rgba(0,0,0,.6); border: 2px solid #000; }
+#carhp { height: 100%; width: 100%; background: #4dabf7; transition: width .2s; }
+body.touch #carbar > div { width: 96px; }

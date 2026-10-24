@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 
 // ============================================================
 //  Блок-Сити — город из кубиков
@@ -164,7 +165,13 @@ function solidAt(x, y, z) {
   if (y >= H) return false;
   return isSolid(world[idx(x, y, z)]);
 }
-function put(x, y, z, b) { if (x >= 0 && z >= 0 && x < W && z < D && y >= 0 && y < H) world[idx(x, y, z)] = b; }
+const voxBodies = new Map();   // physics colliders for voxels near debris
+function put(x, y, z, b) {
+  if (x >= 0 && z >= 0 && x < W && z < D && y >= 0 && y < H) {
+    world[idx(x, y, z)] = b;
+    if (voxBodies.size) voxelChanged(x, y, z);
+  }
+}
 function fill(x0, y0, z0, x1, y1, z1, b) { for (let y = y0; y < y1; y++) for (let z = z0; z < z1; z++) for (let x = x0; x < x1; x++) put(x, y, z, b); }
 
 // ------------------------------------------------------------
@@ -465,24 +472,31 @@ const CAR_COLORS = ['#c0392b', '#2e86de', '#27ae60', '#ecf0f1', '#8e44ad', '#e67
 const lightRed = new THREE.MeshBasicMaterial({ color: '#ff2020' });
 const lightBlue = new THREE.MeshBasicMaterial({ color: '#2050ff' });
 const lightOff = new THREE.MeshBasicMaterial({ color: '#333333' });
+const headMat = new THREE.MeshBasicMaterial({ color: '#fff7c0' });
 function makeCarModel(kind, color) {
   const g = new THREE.Group();
   const body = kind === 'police' ? '#16181d' : color;
   const low = kind === 'sport';
-  box(g, 2, low ? 0.6 : 0.72, 4.2, body, 0, low ? 0.6 : 0.66, 0);
-  box(g, 1.8, low ? 0.5 : 0.66, low ? 1.8 : 2.2, '#1b2833', 0, low ? 1.15 : 1.34, low ? -0.4 : -0.25);
-  box(g, 1.84, 0.08, low ? 1.6 : 2.0, body, 0, low ? 1.42 : 1.7, low ? -0.4 : -0.25);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, 0.3, 0.7, 0.72, '#111111', sx * 0.97, 0.35, sz * 1.35);
-  box(g, 0.42, 0.2, 0.05, '#fff7c0', -0.62, 0.78, 2.11, new THREE.MeshBasicMaterial({ color: '#fff7c0' }));
-  box(g, 0.42, 0.2, 0.05, '#fff7c0', 0.62, 0.78, 2.11, new THREE.MeshBasicMaterial({ color: '#fff7c0' }));
-  box(g, 0.42, 0.18, 0.05, '#c01010', -0.62, 0.78, -2.11);
-  box(g, 0.42, 0.18, 0.05, '#c01010', 0.62, 0.78, -2.11);
-  let bar = null;
-  if (kind === 'police') {
-    box(g, 2.03, 0.36, 1.7, '#f4f4f4', 0, 0.64, 0);
-    bar = [box(g, 0.55, 0.16, 0.3, '', -0.32, 1.82, -0.25, lightRed), box(g, 0.55, 0.16, 0.3, '', 0.32, 1.82, -0.25, lightBlue)];
+  const det = m => { m.userData.detach = true; return m; };
+  const by = low ? 0.6 : 0.66, bh = low ? 0.6 : 0.72;
+  box(g, 2, bh, 3.6, body, 0, by, 0);                                         // chassis
+  box(g, 1.8, low ? 0.5 : 0.66, low ? 1.8 : 2.2, '#1b2833', 0, low ? 1.15 : 1.34, low ? -0.4 : -0.25); // cabin
+  det(box(g, 1.84, 0.08, low ? 1.6 : 2.0, body, 0, low ? 1.42 : 1.7, low ? -0.4 : -0.25)); // roof
+  det(box(g, 1.9, 0.08, 1.15, body, 0, by + bh / 2 + 0.04, 1.35));              // hood
+  det(box(g, 2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, 1.95));                       // front bumper
+  det(box(g, 2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, -1.95));                      // rear bumper
+  for (const sx of [-1, 1]) {
+    det(box(g, 0.08, bh * 0.85, 1.3, kind === 'police' ? '#f4f4f4' : body, sx * 1.02, by, 0.05)); // doors
+    det(box(g, 0.22, 0.14, 0.1, body, sx * 1.1, by + 0.5, 0.75));                // mirrors
+    for (const sz of [-1, 1]) box(g, 0.3, 0.7, 0.72, '#111111', sx * 0.97, 0.35, sz * 1.35); // wheels
   }
-  if (kind === 'taxi') box(g, 0.6, 0.2, 0.3, '#fff3a0', 0, 1.84, -0.25);
+  det(box(g, 0.42, 0.2, 0.05, '#fff7c0', -0.62, 0.78, 2.11, headMat));
+  det(box(g, 0.42, 0.2, 0.05, '#fff7c0', 0.62, 0.78, 2.11, headMat));
+  det(box(g, 0.42, 0.18, 0.05, '#c01010', -0.62, 0.78, -2.11));
+  det(box(g, 0.42, 0.18, 0.05, '#c01010', 0.62, 0.78, -2.11));
+  let bar = null;
+  if (kind === 'police') bar = [det(box(g, 0.55, 0.16, 0.3, '', -0.32, 1.82, -0.25, lightRed)), det(box(g, 0.55, 0.16, 0.3, '', 0.32, 1.82, -0.25, lightBlue))];
+  if (kind === 'taxi') det(box(g, 0.6, 0.2, 0.3, '#fff3a0', 0, 1.84, -0.25));
   scene.add(g);
   return { g, bar };
 }
@@ -528,11 +542,14 @@ const nearestNode = (x, z) => [clamp(Math.round((x - OFF - 3.5) / 24), 0, 7), cl
 function addCar(kind, x, z, heading) {
   const color = kind === 'taxi' ? '#f1c40f' : kind === 'sport' ? mpick(['#e0201b', '#ff7a00', '#1e90ff', '#111111']) : mpick(CAR_COLORS);
   const m = makeCarModel(kind, color);
-  const car = { kind, model: m, pos: new THREE.Vector3(x, G, z), heading, speed: 0, ai: 'parked', bump: 0, honk: 0, stuck: 0, rev: 0, wp: null, shootCD: mr(0.5, 1.5) };
+  const car = { kind, model: m, pos: new THREE.Vector3(x, G, z), heading, speed: 0, ai: 'parked', bump: 0, honk: 0, stuck: 0, rev: 0, wp: null, shootCD: mr(0.5, 1.5),
+    hp: kind === 'police' ? 140 : kind === 'sport' ? 90 : 100, maxHp: kind === 'police' ? 140 : kind === 'sport' ? 90 : 100, smokeT: 0 };
+  car.kbody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Box(new CANNON.Vec3(1, 0.75, 2.15)) });
+  phys.addBody(car.kbody);
   m.g.position.copy(car.pos); m.g.rotation.y = heading;
   cars.push(car); return car;
 }
-function removeCar(car) { scene.remove(car.model.g); cars.splice(cars.indexOf(car), 1); }
+function removeCar(car) { scene.remove(car.model.g); phys.removeBody(car.kbody); const i = cars.indexOf(car); if (i >= 0) cars.splice(i, 1); if (player.inCar === car) exitCar(true); }
 function setTrafficRoute(car, from, to) {
   car.ai = 'traffic'; car.from = from; car.to = to; car.t = 0; car.cruise = mr(6.5, 10);
 }
@@ -581,6 +598,9 @@ function driveCar(car, throttle, steer, handbrake, dt) {
   const nzz = car.pos.z + Math.cos(car.heading) * car.speed * dt;
   if (carBlockedAt(nx, nzz, car.heading) && !carBlockedAt(car.pos.x, car.pos.z, car.heading)) {
     const imp = Math.abs(car.speed);
+    const broke = imp > 10 ? smashBlocks(car, imp) : 0;
+    if (imp > 8) damageCar(car, (imp - 8) * (car.kind === 'police' ? 1 : 2.4));
+    if (broke && imp > 17) { car.speed *= 0.55; return imp; }   // plough through the wall
     car.speed *= -0.25;
     return imp;
   }
@@ -744,20 +764,21 @@ function randomSidewalkPickup() {
 }
 
 // ---------- particles
-function spawnParticles(x, y, z, color, n, spd = 4) {
+function spawnParticles(x, y, z, color, n, spd = 4, grav = 20) {
   for (let i = 0; i < n; i++) {
     let p = particles.find(p => p.life <= 0);
     if (!p) { if (particles.length > 260) return; p = { m: new THREE.Mesh(boxGeo(0.18, 0.18, 0.18), lam('#fff')), v: new THREE.Vector3(), life: 0 }; scene.add(p.m); particles.push(p); }
     p.m.material = lam(color); p.m.visible = true;
     p.m.position.set(x + mr(-0.3, 0.3), y + mr(-0.3, 0.3), z + mr(-0.3, 0.3));
     p.v.set(mr(-1, 1) * spd, mr(0.5, 1.5) * spd, mr(-1, 1) * spd);
-    p.life = mr(0.5, 1.1);
+    p.life = mr(0.5, 1.1); p.g = grav;
+    if (grav < 0) { p.v.set(mr(-0.5, 0.5), mr(1, 2), mr(-0.5, 0.5)); p.life = mr(1, 1.8); }
   }
 }
 function updateParticles(dt) {
   for (const p of particles) {
     if (p.life <= 0) continue;
-    p.life -= dt; p.v.y -= 20 * dt; p.m.position.addScaledVector(p.v, dt);
+    p.life -= dt; p.v.y -= (p.g ?? 20) * dt; p.m.position.addScaledVector(p.v, dt);
     if (p.m.position.y < G + 0.1) { p.m.position.y = G + 0.1; p.v.multiplyScalar(0.5); }
     p.m.rotation.x += dt * 5; p.m.rotation.y += dt * 4;
     if (p.life <= 0) p.m.visible = false;
@@ -884,6 +905,8 @@ function explode(cx, cy, cz, r) {
   flash.position.set(cx + 0.5, cy + 0.5, cz + 0.5); scene.add(flash);
   particles.push({ m: flash, v: new THREE.Vector3(), life: 0.4, flash: true });
   const R2 = Math.ceil(r);
+  let thrown = 0;
+  blastDebris(cx + 0.5, cy + 0.5, cz + 0.5, r + 5, 30);
   for (let x = cx - R2; x <= cx + R2; x++) for (let y = Math.max(1, cy - R2); y <= cy + R2; y++) for (let z = cz - R2; z <= cz + R2; z++) {
     const d = Math.hypot(x - cx, y - cy, z - cz);
     if (d > r + Math.random() * 0.6) continue;
@@ -891,7 +914,11 @@ function explode(cx, cy, cz, r) {
     if (!b) continue;
     if (b === B.TNT) { igniteTNT(x, y, z, mr(0.3, 0.7)); continue; }
     put(x, y, z, 0); placed.delete(idx(x, y, z));
-    if (Math.random() < 0.08) spawnParticles(x + 0.5, y + 0.5, z + 0.5, BL[b].c, 2, 7);
+    if (y >= G - 1 && thrown < (isTouch ? 18 : 40) && Math.random() < 0.55) {
+      thrown++;
+      const dx = x - cx, dy = y - cy + 1.5, dz = z - cz, l = Math.hypot(dx, dy, dz) || 1, f = 14 / (0.6 + l * 0.5);
+      blockDebris(x, y, z, b, 0.7, { x: dx / l * f, y: Math.abs(dy / l) * f + 4, z: dz / l * f });
+    }
   }
   for (let x = cx - R2 - 1; x <= cx + R2 + 1; x += 1) for (let z = cz - R2 - 1; z <= cz + R2 + 1; z += 1) {
     if (x >= 0 && z >= 0 && x < W && z < D) { markDirty(x, z); mapPixel(x, z); }
@@ -907,6 +934,7 @@ function explode(cx, cy, cz, r) {
     const d = Math.hypot(c.pos.x - ex, c.pos.z - ez);
     if (d < r + 4 && c.ai !== 'traffic') c.speed = -8;
     if (d < r + 4 && c.ai === 'traffic') c.bump = 4;
+    if (d < r + 4) damageCar(c, (r + 4 - d) * 22);
   }
   const tp = player.inCar ? player.inCar.pos : player.pos;
   const pd = Math.hypot(tp.x - ex, (player.inCar ? G : player.pos.y) - cy, tp.z - ez);
@@ -971,6 +999,7 @@ function actionPrimary() {
   const wasPlaced = placed.has(idx(x, y, z));
   setBlock(x, y, z, 0); placed.delete(idx(x, y, z));
   spawnParticles(x + 0.5, y + 0.5, z + 0.5, BL[b].c, 7, 3);
+  if (b === B.LOG) fellTree(x, y, z, -Math.sin(yaw), -Math.cos(yaw), 2);
   sfx.brk();
   if (!wasPlaced && b === B.GOLD) { addMoney(250); addHeat(1.6, 'Ограбление банка!'); }
   if (!wasPlaced && b === B.DIAM) { addMoney(1000); addHeat(2.5, 'Украл алмаз!'); }
@@ -1152,6 +1181,8 @@ function carCollisions(dt) {
       else if (dynA) { A.pos.x -= dx * push; A.pos.z -= dz * push; }
       else { Bc.pos.x += dx * push; Bc.pos.z += dz * push; }
       if (rel > 6) {
+        const hitDmg = (rel - 5) * 2.6;
+        damageCar(A, hitDmg * (A.kind === 'police' ? 0.6 : 1)); damageCar(Bc, hitDmg * (Bc.kind === 'police' ? 0.6 : 1));
         if (A.ai === 'player' || Bc.ai === 'player') {
           sfx.crash(); camShake = 0.3;
           const other = A.ai === 'player' ? Bc : A;
@@ -1266,6 +1297,9 @@ let lastHud = '';
 function updateHud(dt) {
   if (toastT > 0 && (toastT -= dt) <= 0) $('#toast').classList.remove('show');
   if (bigT > 0 && (bigT -= dt) <= 0) $('#big').classList.remove('show');
+  const cb = $('#carbar');
+  cb.classList.toggle('hidden', !player.inCar);
+  if (player.inCar) { const f = clamp(player.inCar.hp / player.inCar.maxHp, 0, 1); const ch = $('#carhp'); ch.style.width = f * 100 + '%'; ch.style.background = f > 0.5 ? '#4dabf7' : f > 0.25 ? '#f0b429' : '#e03131'; }
   const key = player.money + '|' + stars + '|' + Math.ceil(player.health) + '|' + seen;
   if (key !== lastHud) {
     lastHud = key;
@@ -1445,6 +1479,204 @@ function setupEntities() {
 }
 let clouds = [], outline = null;
 
+
+// ------------------------------------------------------------
+//  Physics (cannon-es): flying blocks, car parts, wrecks
+// ------------------------------------------------------------
+const phys = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
+phys.broadphase = new CANNON.SAPBroadphase(phys);
+phys.allowSleep = true;
+phys.defaultContactMaterial.friction = 0.5;
+phys.defaultContactMaterial.restitution = 0.15;
+const voxShape = new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5));
+const debris = [];
+const MAX_DEBRIS = isTouch ? 70 : 180;
+let physFrame = 0, trafficT = 2;
+const debrisMat = new THREE.MeshLambertMaterial({ map: atlasTex });
+const blockGeoCache = new Map();
+function blockGeo(b, sz) {
+  const key = b + '_' + sz;
+  if (blockGeoCache.has(key)) return blockGeoCache.get(key);
+  const g = new THREE.BoxGeometry(sz, sz, sz), uv = g.attributes.uv, t = BL[b].t;
+  for (let f = 0; f < 6; f++) {
+    const [u0, v0, u1, v1] = tileUV(f === 2 ? t[0] : f === 3 ? t[2] : t[1]);
+    for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0)); }
+  }
+  blockGeoCache.set(key, g); return g;
+}
+function voxelChanged(x, y, z) {
+  const k = idx(x, y, z), v = voxBodies.get(k);
+  if (!v || isSolid(world[k])) return;
+  phys.removeBody(v.body); voxBodies.delete(k);
+  for (const d of debris) if (Math.abs(d.body.position.x - x) < 3 && Math.abs(d.body.position.z - z) < 3) d.body.wakeUp();
+}
+function ensureVoxelsAround(p, r) {
+  const x0 = Math.max(0, Math.floor(p.x - r)), x1 = Math.min(W - 1, Math.floor(p.x + r));
+  const y0 = Math.max(0, Math.floor(p.y - r)), y1 = Math.min(H - 1, Math.floor(p.y + r));
+  const z0 = Math.max(0, Math.floor(p.z - r)), z1 = Math.min(D - 1, Math.floor(p.z + r));
+  for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+    const k = idx(x, y, z);
+    if (!isSolid(world[k])) continue;
+    const v = voxBodies.get(k);
+    if (v) { v.used = physFrame; continue; }
+    const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: voxShape });
+    body.position.set(x + 0.5, y + 0.5, z + 0.5);
+    phys.addBody(body);
+    voxBodies.set(k, { body, used: physFrame });
+  }
+}
+function removeDebris(d) {
+  scene.remove(d.mesh); phys.removeBody(d.body);
+  const i = debris.indexOf(d); if (i >= 0) debris.splice(i, 1);
+}
+function addDebris(mesh, hx, hy, hz, vel, life = 22) {
+  if (debris.length >= MAX_DEBRIS) removeDebris(debris[0]);
+  const body = new CANNON.Body({
+    mass: Math.max(0.4, hx * hy * hz * 8 * 2), shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)),
+    linearDamping: 0.05, angularDamping: 0.15, sleepSpeedLimit: 0.35, sleepTimeLimit: 0.7,
+  });
+  body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
+  body.quaternion.set(mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w);
+  body.velocity.set(vel.x, vel.y, vel.z);
+  body.angularVelocity.set(mr(-7, 7), mr(-7, 7), mr(-7, 7));
+  phys.addBody(body); scene.add(mesh);
+  ensureVoxelsAround(body.position, Math.max(hx, hy, hz) + 1.3);
+  debris.push({ mesh, body, life, r: Math.max(hx, hy, hz) + 1.3 });
+}
+function blockDebris(x, y, z, b, size, vel) {
+  const m = new THREE.Mesh(blockGeo(b, size), debrisMat);
+  m.position.set(x + 0.5 + mr(-0.15, 0.15), y + 0.5, z + 0.5 + mr(-0.15, 0.15));
+  m.rotation.set(mr(-0.3, 0.3), mr(0, 3), mr(-0.3, 0.3));
+  addDebris(m, size / 2, size / 2, size / 2, vel);
+}
+function blastDebris(x, y, z, radius, power) {
+  for (const d of debris) {
+    const p = d.body.position, dx = p.x - x, dy = p.y - y, dz = p.z - z, l = Math.hypot(dx, dy, dz);
+    if (l > radius || l < 0.01) continue;
+    const f = power * (1 - l / radius) * d.body.mass;
+    d.body.wakeUp();
+    d.body.applyImpulse(new CANNON.Vec3(dx / l * f, (Math.abs(dy / l) + 0.6) * f, dz / l * f));
+  }
+}
+
+// trees fall apart when their trunk is broken
+function fellTree(x, y, z, dirX, dirZ, push) {
+  const seen = new Set(), q = [[x, y + 1, z]], out = [];
+  while (q.length && out.length < 90) {
+    const [cx, cy, cz] = q.pop(), k = idx(cx, cy, cz);
+    if (seen.has(k) || cy <= y - 1 || Math.abs(cx - x) > 4 || Math.abs(cz - z) > 4) continue;
+    seen.add(k);
+    const b = get(cx, cy, cz);
+    if (b !== B.LOG && b !== B.LEAF) continue;
+    out.push([cx, cy, cz, b]);
+    q.push([cx + 1, cy, cz], [cx - 1, cy, cz], [cx, cy + 1, cz], [cx, cy - 1, cz], [cx, cy, cz + 1], [cx, cy, cz - 1]);
+  }
+  if (!out.length) return;
+  // only fall if nothing else holds the tree up
+  for (const [cx, cy, cz] of out) if (cy === y && cx === x && cz === z) return;
+  let n = 0;
+  for (const [cx, cy, cz, b] of out) {
+    setBlock(cx, cy, cz, 0);
+    const h = cy - y;
+    if (b === B.LOG || n++ % 2 === 0) blockDebris(cx, cy, cz, b, 1, { x: dirX * push * (0.4 + h * 0.35) + mr(-0.4, 0.4), y: mr(0, 1), z: dirZ * push * (0.4 + h * 0.35) + mr(-0.4, 0.4) });
+  }
+}
+
+// a fast car knocks blocks out of walls
+function smashBlocks(car, imp) {
+  const s = Math.sin(car.heading), co = Math.cos(car.heading), dir = car.speed >= 0 ? 1 : -1;
+  const top = imp > 22 ? G + 3 : G + 2, maxN = imp > 22 ? 16 : 8;
+  let n = 0;
+  const done = new Set();
+  for (const reach of [2.3, 2.9, imp > 22 ? 3.6 : 2.9]) for (const lx of [-1.3, -0.6, 0, 0.6, 1.3]) {
+    const px = car.pos.x + co * lx + s * reach * dir, pz = car.pos.z - s * lx + co * reach * dir;
+    const bx = Math.floor(px), bz = Math.floor(pz);
+    for (let y = G; y < top; y++) {
+      const k = idx(bx, y, bz), b = get(bx, y, bz);
+      if (done.has(k) || !isSolid(b) || n >= maxN) continue;
+      done.add(k); n++;
+      setBlock(bx, y, bz, 0); placed.delete(k);
+      const v = imp * mr(0.35, 0.75);
+      const vel = { x: s * dir * v + mr(-2, 2), y: mr(1.5, 5), z: co * dir * v + mr(-2, 2) };
+      if (b === B.TNT) { igniteTNT(bx, y, bz, 0.4); continue; }
+      blockDebris(bx, y, bz, b, 0.55, vel);
+      blockDebris(bx, y, bz, b, 0.5, { x: vel.x * 0.8, y: vel.y + 1, z: vel.z * 0.8 });
+      if (b === B.LOG) fellTree(bx, y, bz, s * dir, co * dir, imp * 0.15);
+    }
+  }
+  if (n) {
+    sfx.brk(); sfx.crash(); camShake = Math.max(camShake, Math.min(0.7, imp / 35));
+    spawnParticles(car.pos.x + s * dir * 2.6, G + 1, car.pos.z + co * dir * 2.6, '#9a9a9a', 8, 4);
+  }
+  return n;
+}
+
+// ---- car damage: parts fly off, then the whole car falls apart
+function detachPart(car, mesh, force) {
+  const wp = new THREE.Vector3(), wq = new THREE.Quaternion();
+  mesh.getWorldPosition(wp); mesh.getWorldQuaternion(wq);
+  car.model.g.remove(mesh);
+  mesh.position.copy(wp); mesh.quaternion.copy(wq);
+  const p = mesh.geometry.parameters;
+  const out = new THREE.Vector3(wp.x - car.pos.x, 0, wp.z - car.pos.z);
+  if (out.lengthSq() < 0.01) out.set(mr(-1, 1), 0, mr(-1, 1));
+  out.normalize();
+  const fx = Math.sin(car.heading) * car.speed * 0.6, fz = Math.cos(car.heading) * car.speed * 0.6;
+  addDebris(mesh, Math.max(0.04, p.width / 2), Math.max(0.04, p.height / 2), Math.max(0.04, p.depth / 2),
+    { x: fx + out.x * mr(2, 6) * force, y: mr(2.5, 6.5) * force, z: fz + out.z * mr(2, 6) * force }, 26);
+}
+function damageCar(car, dmg) {
+  if (!car || car.dead || dmg <= 0) return;
+  car.hp -= dmg;
+  const parts = car.model.g.children.filter(m => m.userData.detach);
+  let n = Math.floor(dmg / 9 + Math.random() * 0.9);
+  while (n-- > 0 && parts.length) detachPart(car, parts.splice(Math.floor(Math.random() * parts.length), 1)[0], 1);
+  if (dmg > 6) { if (AC) { const t = AC.currentTime; tone(t, 0.12, mr(500, 900), 0.08, 'square', master, 200); } }
+}
+function destroyCar(car) {
+  if (car.dead) return;
+  car.dead = true;
+  const wasPlayer = player.inCar === car;
+  car.model.g.position.set(car.pos.x, G, car.pos.z); car.model.g.updateMatrixWorld(true);
+  for (const m of [...car.model.g.children]) detachPart(car, m, 1.7);
+  const p = { x: car.pos.x, z: car.pos.z };
+  removeCar(car);
+  sfx.boom(); camShake = Math.max(camShake, 0.7);
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff9a3c', transparent: true, opacity: 0.9 }));
+  flash.position.set(p.x, G + 1, p.z); scene.add(flash);
+  particles.push({ m: flash, v: new THREE.Vector3(), life: 0.4, flash: true });
+  spawnParticles(p.x, G + 1, p.z, '#ff8c1a', 16, 8);
+  for (let i = 0; i < 12; i++) spawnParticles(p.x + mr(-1, 1), G + 1.2, p.z + mr(-1, 1), mpick(['#222222', '#444444']), 1, 1, -3);
+  blastDebris(p.x, G + 0.5, p.z, 8, 9);
+  for (const pd of peds) { const d = Math.hypot(pd.pos.x - p.x, pd.pos.z - p.z); if (d < 5) knockPed(pd, (pd.pos.x - p.x) * 2, 7, (pd.pos.z - p.z) * 2); }
+  const tp = player.inCar ? player.inCar.pos : player.pos, pdist = Math.hypot(tp.x - p.x, tp.z - p.z);
+  if (wasPlayer) { hurt(30); player.vel.set(mr(-4, 4), 9, mr(-4, 4)); toast('Машина развалилась!', '#ff6b6b'); }
+  else if (pdist < 5) hurt((5 - pdist) * 8);
+}
+
+function updatePhysics(dt) {
+  physFrame++;
+  for (const c of cars) {
+    const b = c.kbody;
+    b.position.set(c.pos.x, G + 0.75, c.pos.z);
+    b.quaternion.setFromEuler(0, c.heading, 0);
+    b.velocity.set(Math.sin(c.heading) * c.speed, 0, Math.cos(c.heading) * c.speed);
+  }
+  for (const d of debris) if (d.body.sleepState !== CANNON.Body.SLEEPING || physFrame % 30 === 0) ensureVoxelsAround(d.body.position, d.r);
+  phys.step(1 / 60, dt, 3);
+  for (let i = debris.length - 1; i >= 0; i--) {
+    const d = debris[i];
+    d.life -= dt;
+    d.mesh.position.set(d.body.position.x, d.body.position.y, d.body.position.z);
+    d.mesh.quaternion.set(d.body.quaternion.x, d.body.quaternion.y, d.body.quaternion.z, d.body.quaternion.w);
+    if (d.life < 1.5) d.mesh.scale.setScalar(Math.max(0.01, d.life / 1.5));
+    if (d.life <= 0 || d.body.position.y < -6) removeDebris(d);
+  }
+  if (physFrame % 60 === 0) {
+    for (const [k, v] of voxBodies) if (physFrame - v.used > 90) { phys.removeBody(v.body); voxBodies.delete(k); }
+  }
+}
+
 // ------------------------------------------------------------
 //  Main loop
 // ------------------------------------------------------------
@@ -1470,6 +1702,17 @@ function step(dt) {
   }
   carCollisions(dt);
   for (const c of cars) { c.model.g.position.set(c.pos.x, G, c.pos.z); c.model.g.rotation.y = c.heading; }
+  for (const c of [...cars]) {
+    if (c.hp <= 0) { destroyCar(c); continue; }
+    if (c.hp < c.maxHp * 0.4 && (c.smokeT -= dt) <= 0) {
+      c.smokeT = c.hp < c.maxHp * 0.2 ? 0.05 : 0.14;
+      const fx = Math.sin(c.heading), fz = Math.cos(c.heading);
+      spawnParticles(c.pos.x + fx * 1.5, G + 1.1, c.pos.z + fz * 1.5, c.hp < c.maxHp * 0.2 ? mpick(['#222222', '#ff7a1a', '#333333']) : '#666666', 1, 1, -3);
+    }
+  }
+  trafficT -= dt;
+  if (trafficT <= 0) { trafficT = 2; if (cars.filter(c => c.ai === 'traffic').length < (isTouch ? 16 : 26)) spawnTraffic(player.inCar ? player.inCar.pos : player.pos); }
+  updatePhysics(dt);
   for (const p of peds) updatePed(p, dt);
   managePolice(dt);
   // pickups
@@ -1539,4 +1782,4 @@ function boot() {
 setTimeout(boot, 30);
 window.__gt = () => gameTime;
 window.__cam = () => [camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1), yaw.toFixed(2), pitch.toFixed(2), camDist.toFixed(2)];
-window.__game = { player, cars, peds, currentAim, actionPrimary, actionSecondary, select, enterCar, keys, get stars() { return stars; }, addHeat, setYaw: (y, p) => { yaw = y; pitch = p; } };
+window.__game = { player, cars, peds, debris, damageCar, currentAim, actionPrimary, actionSecondary, select, enterCar, keys, get stars() { return stars; }, addHeat, setYaw: (y, p) => { yaw = y; pitch = p; } };
