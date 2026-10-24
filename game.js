@@ -320,14 +320,15 @@ generate();
 //  Renderer / scene
 // ------------------------------------------------------------
 const canvas = $('#c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1.25 : 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isTouch && devicePixelRatio < 1.5, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, isTouch ? 1 : 1.5));
 renderer.setSize(innerWidth, innerHeight);
 const scene = new THREE.Scene();
 const SKY = new THREE.Color('#8fcbff');
 scene.background = SKY;
-scene.fog = new THREE.Fog('#b9e0ff', 70, 165);
-const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 400);
+const VIEW = isTouch ? 105 : 160;
+scene.fog = new THREE.Fog('#b9e0ff', isTouch ? 45 : 70, VIEW);
+const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, VIEW + 10);
 scene.add(new THREE.HemisphereLight('#e8f4ff', '#6b5f4a', 1.6));
 const sun = new THREE.DirectionalLight('#fff0d0', 1.9);
 sun.position.set(70, 120, 40);
@@ -442,23 +443,46 @@ function box(parent, w, h, d, color, x, y, z, mat) {
   m.position.set(x, y, z); parent.add(m); return m;
 }
 
+// merge many coloured boxes into one geometry (one draw call)
+const BOX_TPL = new THREE.BoxGeometry(1, 1, 1);
+const vcMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const colCache = new Map();
+const colorOf = c => { if (!colCache.has(c)) colCache.set(c, new THREE.Color(c)); return colCache.get(c); };
+function mergeBoxes(parts) {
+  const P = BOX_TPL.attributes.position.array, N = BOX_TPL.attributes.normal.array, I = BOX_TPL.index.array;
+  const n = parts.length, pos = new Float32Array(n * 72), nor = new Float32Array(n * 72), col = new Float32Array(n * 72), ind = new Uint16Array(n * 36);
+  parts.forEach((p, k) => {
+    const c = colorOf(p.color);
+    for (let v = 0; v < 24; v++) {
+      const o = k * 72 + v * 3;
+      pos[o] = P[v * 3] * p.w + p.x; pos[o + 1] = P[v * 3 + 1] * p.h + p.y; pos[o + 2] = P[v * 3 + 2] * p.d + p.z;
+      nor[o] = N[v * 3]; nor[o + 1] = N[v * 3 + 1]; nor[o + 2] = N[v * 3 + 2];
+      col[o] = c.r; col[o + 1] = c.g; col[o + 2] = c.b;
+    }
+    for (let i = 0; i < 36; i++) ind[k * 36 + i] = I[i] + k * 24;
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(new THREE.BufferAttribute(ind, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+const bx = (w, h, d, color, x, y, z, extra) => Object.assign({ w, h, d, color, x, y, z }, extra);
+
 function makeHuman(o) {
   const g = new THREE.Group(); g.rotation.order = 'YXZ';
-  const legL = new THREE.Group(), legR = new THREE.Group(), armL = new THREE.Group(), armR = new THREE.Group();
-  legL.position.set(-0.13, 0.8, 0); legR.position.set(0.13, 0.8, 0);
-  armL.position.set(-0.39, 1.45, 0); armR.position.set(0.39, 1.45, 0);
-  box(legL, 0.25, 0.8, 0.27, o.pants, 0, -0.4, 0);
-  box(legR, 0.25, 0.8, 0.27, o.pants, 0, -0.4, 0);
-  box(armL, 0.2, 0.3, 0.22, o.sleeve || o.shirt, 0, -0.1, 0); box(armL, 0.19, 0.42, 0.21, o.skin, 0, -0.45, 0);
-  box(armR, 0.2, 0.3, 0.22, o.sleeve || o.shirt, 0, -0.1, 0); box(armR, 0.19, 0.42, 0.21, o.skin, 0, -0.45, 0);
-  box(g, 0.56, 0.7, 0.3, o.shirt, 0, 1.15, 0);
-  box(g, 0.42, 0.42, 0.42, o.skin, 0, 1.72, 0);
-  box(g, 0.44, 0.13, 0.44, o.hair, 0, 1.94, 0);
-  box(g, 0.44, 0.2, 0.08, o.hair, 0, 1.82, -0.19);
-  if (o.glasses) box(g, 0.38, 0.08, 0.03, '#111111', 0, 1.76, 0.215);
-  else { box(g, 0.08, 0.07, 0.02, '#1a1a1a', -0.1, 1.76, 0.215); box(g, 0.08, 0.07, 0.02, '#1a1a1a', 0.1, 1.76, 0.215); }
-  if (o.cap) { box(g, 0.46, 0.1, 0.46, o.cap, 0, 1.98, 0); box(g, 0.4, 0.05, 0.2, o.cap, 0, 1.95, 0.3); }
-  g.add(legL, legR, armL, armR);
+  const body = [bx(0.56, 0.7, 0.3, o.shirt, 0, 1.15, 0), bx(0.42, 0.42, 0.42, o.skin, 0, 1.72, 0),
+    bx(0.44, 0.13, 0.44, o.hair, 0, 1.94, 0), bx(0.44, 0.2, 0.08, o.hair, 0, 1.82, -0.19)];
+  if (o.glasses) body.push(bx(0.38, 0.08, 0.03, '#111111', 0, 1.76, 0.215));
+  else body.push(bx(0.08, 0.07, 0.02, '#1a1a1a', -0.1, 1.76, 0.215), bx(0.08, 0.07, 0.02, '#1a1a1a', 0.1, 1.76, 0.215));
+  if (o.cap) body.push(bx(0.46, 0.1, 0.46, o.cap, 0, 1.98, 0), bx(0.4, 0.05, 0.2, o.cap, 0, 1.95, 0.3));
+  g.add(new THREE.Mesh(mergeBoxes(body), vcMat));
+  const armGeo = mergeBoxes([bx(0.2, 0.3, 0.22, o.sleeve || o.shirt, 0, -0.1, 0), bx(0.19, 0.42, 0.21, o.skin, 0, -0.45, 0)]);
+  const legGeo = mergeBoxes([bx(0.25, 0.8, 0.27, o.pants, 0, -0.4, 0)]);
+  const limb = (geo, x, y) => { const m = new THREE.Mesh(geo, vcMat); m.position.set(x, y, 0); g.add(m); return m; };
+  const legL = limb(legGeo, -0.13, 0.8), legR = limb(legGeo, 0.13, 0.8), armL = limb(armGeo, -0.39, 1.45), armR = limb(armGeo, 0.39, 1.45);
   scene.add(g);
   return { g, legL, legR, armL, armR, phase: Math.random() * 6 };
 }
@@ -472,33 +496,45 @@ const CAR_COLORS = ['#c0392b', '#2e86de', '#27ae60', '#ecf0f1', '#8e44ad', '#e67
 const lightRed = new THREE.MeshBasicMaterial({ color: '#ff2020' });
 const lightBlue = new THREE.MeshBasicMaterial({ color: '#2050ff' });
 const lightOff = new THREE.MeshBasicMaterial({ color: '#333333' });
-const headMat = new THREE.MeshBasicMaterial({ color: '#fff7c0' });
-function makeCarModel(kind, color) {
-  const g = new THREE.Group();
+function carParts(kind, color) {
   const body = kind === 'police' ? '#16181d' : color;
   const low = kind === 'sport';
-  const det = m => { m.userData.detach = true; return m; };
   const by = low ? 0.6 : 0.66, bh = low ? 0.6 : 0.72;
-  box(g, 2, bh, 3.6, body, 0, by, 0);                                         // chassis
-  box(g, 1.8, low ? 0.5 : 0.66, low ? 1.8 : 2.2, '#1b2833', 0, low ? 1.15 : 1.34, low ? -0.4 : -0.25); // cabin
-  det(box(g, 1.84, 0.08, low ? 1.6 : 2.0, body, 0, low ? 1.42 : 1.7, low ? -0.4 : -0.25)); // roof
-  det(box(g, 1.9, 0.08, 1.15, body, 0, by + bh / 2 + 0.04, 1.35));              // hood
-  det(box(g, 2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, 1.95));                       // front bumper
-  det(box(g, 2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, -1.95));                      // rear bumper
+  const D = { detach: true }, S = { detach: true, small: true };
+  const p = [
+    bx(2, bh, 3.6, body, 0, by, 0),
+    bx(1.8, low ? 0.5 : 0.66, low ? 1.8 : 2.2, '#1b2833', 0, low ? 1.15 : 1.34, low ? -0.4 : -0.25),
+    bx(1.84, 0.08, low ? 1.6 : 2.0, body, 0, low ? 1.42 : 1.7, low ? -0.4 : -0.25, D),
+    bx(1.9, 0.08, 1.15, body, 0, by + bh / 2 + 0.04, 1.35, D),
+    bx(2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, 1.95, D),
+    bx(2.04, 0.34, 0.3, '#2a2a2a', 0, 0.48, -1.95, D),
+    bx(0.42, 0.2, 0.05, '#fff7c0', -0.62, 0.78, 2.11, S), bx(0.42, 0.2, 0.05, '#fff7c0', 0.62, 0.78, 2.11, S),
+    bx(0.42, 0.18, 0.05, '#c01010', -0.62, 0.78, -2.11, S), bx(0.42, 0.18, 0.05, '#c01010', 0.62, 0.78, -2.11, S),
+  ];
   for (const sx of [-1, 1]) {
-    det(box(g, 0.08, bh * 0.85, 1.3, kind === 'police' ? '#f4f4f4' : body, sx * 1.02, by, 0.05)); // doors
-    det(box(g, 0.22, 0.14, 0.1, body, sx * 1.1, by + 0.5, 0.75));                // mirrors
-    for (const sz of [-1, 1]) box(g, 0.3, 0.7, 0.72, '#111111', sx * 0.97, 0.35, sz * 1.35); // wheels
+    p.push(bx(0.08, bh * 0.85, 1.3, kind === 'police' ? '#f4f4f4' : body, sx * 1.02, by, 0.05, D));
+    p.push(bx(0.22, 0.14, 0.1, body, sx * 1.1, by + 0.5, 0.75, S));
+    for (const sz of [-1, 1]) p.push(bx(0.3, 0.7, 0.72, '#111111', sx * 0.97, 0.35, sz * 1.35));
   }
-  det(box(g, 0.42, 0.2, 0.05, '#fff7c0', -0.62, 0.78, 2.11, headMat));
-  det(box(g, 0.42, 0.2, 0.05, '#fff7c0', 0.62, 0.78, 2.11, headMat));
-  det(box(g, 0.42, 0.18, 0.05, '#c01010', -0.62, 0.78, -2.11));
-  det(box(g, 0.42, 0.18, 0.05, '#c01010', 0.62, 0.78, -2.11));
+  if (kind === 'taxi') p.push(bx(0.6, 0.2, 0.3, '#fff3a0', 0, 1.84, -0.25, D));
+  return p;
+}
+function makeCarModel(kind, color) {
+  const g = new THREE.Group();
+  const parts = carParts(kind, color);
+  const mesh = new THREE.Mesh(mergeBoxes(parts), vcMat);
+  g.add(mesh);
   let bar = null;
-  if (kind === 'police') bar = [det(box(g, 0.55, 0.16, 0.3, '', -0.32, 1.82, -0.25, lightRed)), det(box(g, 0.55, 0.16, 0.3, '', 0.32, 1.82, -0.25, lightBlue))];
-  if (kind === 'taxi') det(box(g, 0.6, 0.2, 0.3, '#fff3a0', 0, 1.84, -0.25));
+  if (kind === 'police') {
+    bar = [new THREE.Mesh(boxGeo(0.55, 0.16, 0.3), lightRed), new THREE.Mesh(boxGeo(0.55, 0.16, 0.3), lightBlue)];
+    bar[0].position.set(-0.32, 1.82, -0.25); bar[1].position.set(0.32, 1.82, -0.25); g.add(bar[0], bar[1]);
+  }
   scene.add(g);
-  return { g, bar };
+  return { g, mesh, parts, bar };
+}
+function rebuildCar(car) {
+  car.model.mesh.geometry.dispose();
+  car.model.mesh.geometry = mergeBoxes(car.model.parts.filter(p => !p.gone));
 }
 
 function textSprite(text, color, size = 64) {
@@ -544,12 +580,12 @@ function addCar(kind, x, z, heading) {
   const m = makeCarModel(kind, color);
   const car = { kind, model: m, pos: new THREE.Vector3(x, G, z), heading, speed: 0, ai: 'parked', bump: 0, honk: 0, stuck: 0, rev: 0, wp: null, shootCD: mr(0.5, 1.5),
     hp: kind === 'police' ? 140 : kind === 'sport' ? 90 : 100, maxHp: kind === 'police' ? 140 : kind === 'sport' ? 90 : 100, smokeT: 0 };
-  car.kbody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Box(new CANNON.Vec3(1, 0.75, 2.15)) });
-  phys.addBody(car.kbody);
+  car.kbody = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC, shape: new CANNON.Box(new CANNON.Vec3(1, 0.75, 2.15)), collisionFilterGroup: GRP_CAR, collisionFilterMask: GRP_DEBRIS });
+  car.kIn = false;
   m.g.position.copy(car.pos); m.g.rotation.y = heading;
   cars.push(car); return car;
 }
-function removeCar(car) { scene.remove(car.model.g); phys.removeBody(car.kbody); const i = cars.indexOf(car); if (i >= 0) cars.splice(i, 1); if (player.inCar === car) exitCar(true); }
+function removeCar(car) { scene.remove(car.model.g); if (car.kIn) phys.removeBody(car.kbody); const i = cars.indexOf(car); if (i >= 0) cars.splice(i, 1); if (player.inCar === car) exitCar(true); }
 function setTrafficRoute(car, from, to) {
   car.ai = 'traffic'; car.from = from; car.to = to; car.t = 0; car.cruise = mr(6.5, 10);
 }
@@ -764,25 +800,49 @@ function randomSidewalkPickup() {
 }
 
 // ---------- particles
+const PMAX = isTouch ? 160 : 320;
+const partIM = new THREE.InstancedMesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), new THREE.MeshLambertMaterial(), PMAX);
+partIM.setColorAt(0, new THREE.Color()); partIM.count = 0; partIM.frustumCulled = false; scene.add(partIM);
+const flashes = [];
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
 function spawnParticles(x, y, z, color, n, spd = 4, grav = 20) {
   for (let i = 0; i < n; i++) {
     let p = particles.find(p => p.life <= 0);
-    if (!p) { if (particles.length > 260) return; p = { m: new THREE.Mesh(boxGeo(0.18, 0.18, 0.18), lam('#fff')), v: new THREE.Vector3(), life: 0 }; scene.add(p.m); particles.push(p); }
-    p.m.material = lam(color); p.m.visible = true;
-    p.m.position.set(x + mr(-0.3, 0.3), y + mr(-0.3, 0.3), z + mr(-0.3, 0.3));
+    if (!p) { if (particles.length >= PMAX) return; p = { pos: new THREE.Vector3(), v: new THREE.Vector3(), life: 0, rx: 0, ry: 0, c: null }; particles.push(p); }
+    p.c = colorOf(color);
+    p.pos.set(x + mr(-0.3, 0.3), y + mr(-0.3, 0.3), z + mr(-0.3, 0.3));
     p.v.set(mr(-1, 1) * spd, mr(0.5, 1.5) * spd, mr(-1, 1) * spd);
     p.life = mr(0.5, 1.1); p.g = grav;
     if (grav < 0) { p.v.set(mr(-0.5, 0.5), mr(1, 2), mr(-0.5, 0.5)); p.life = mr(1, 1.8); }
   }
 }
 function updateParticles(dt) {
+  let n = 0;
   for (const p of particles) {
     if (p.life <= 0) continue;
-    p.life -= dt; p.v.y -= (p.g ?? 20) * dt; p.m.position.addScaledVector(p.v, dt);
-    if (p.m.position.y < G + 0.1) { p.m.position.y = G + 0.1; p.v.multiplyScalar(0.5); }
-    p.m.rotation.x += dt * 5; p.m.rotation.y += dt * 4;
-    if (p.life <= 0) p.m.visible = false;
+    p.life -= dt; p.v.y -= p.g * dt; p.pos.addScaledVector(p.v, dt);
+    if (p.pos.y < G + 0.1) { p.pos.y = G + 0.1; p.v.multiplyScalar(0.5); }
+    p.rx += dt * 5; p.ry += dt * 4;
+    if (p.life <= 0) continue;
+    _q.setFromEuler(_e.set(p.rx, p.ry, 0));
+    _s.setScalar(p.g < 0 ? 1.6 + (1.8 - p.life) : 1);
+    partIM.setMatrixAt(n, _m4.compose(p.pos, _q, _s));
+    partIM.setColorAt(n, p.c);
+    n++;
   }
+  partIM.count = n;
+  partIM.instanceMatrix.needsUpdate = true;
+  if (partIM.instanceColor) partIM.instanceColor.needsUpdate = true;
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i]; f.life -= dt;
+    f.m.scale.setScalar(1 + (0.4 - f.life) * 18); f.m.material.opacity = Math.max(0, f.life * 2);
+    if (f.life <= 0) { scene.remove(f.m); f.m.material.dispose(); flashes.splice(i, 1); }
+  }
+}
+const flashGeo = new THREE.SphereGeometry(1, 10, 6);
+function addFlash(x, y, z, color) {
+  const m = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+  m.position.set(x, y, z); scene.add(m); flashes.push({ m, life: 0.4 });
 }
 
 // ------------------------------------------------------------
@@ -901,9 +961,7 @@ function igniteTNT(x, y, z, fuse = 2.5) {
 }
 function explode(cx, cy, cz, r) {
   sfx.boom(); camShake = 0.8;
-  const flash = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.9 }));
-  flash.position.set(cx + 0.5, cy + 0.5, cz + 0.5); scene.add(flash);
-  particles.push({ m: flash, v: new THREE.Vector3(), life: 0.4, flash: true });
+  addFlash(cx + 0.5, cy + 0.5, cz + 0.5, '#ffb347');
   const R2 = Math.ceil(r);
   let thrown = 0;
   blastDebris(cx + 0.5, cy + 0.5, cz + 0.5, r + 5, 30);
@@ -914,7 +972,7 @@ function explode(cx, cy, cz, r) {
     if (!b) continue;
     if (b === B.TNT) { igniteTNT(x, y, z, mr(0.3, 0.7)); continue; }
     put(x, y, z, 0); placed.delete(idx(x, y, z));
-    if (y >= G - 1 && thrown < (isTouch ? 18 : 40) && Math.random() < 0.55) {
+    if (y >= G - 1 && thrown < (isTouch ? 10 : 24) && Math.random() < 0.5) {
       thrown++;
       const dx = x - cx, dy = y - cy + 1.5, dz = z - cz, l = Math.hypot(dx, dy, dz) || 1, f = 14 / (0.6 + l * 0.5);
       blockDebris(x, y, z, b, 0.7, { x: dx / l * f, y: Math.abs(dy / l) * f + 4, z: dz / l * f });
@@ -1467,17 +1525,15 @@ function setupEntities() {
   for (let i = 0; i < 26; i++) randomSidewalkPickup();
   for (const b of bankLabels) { const s = textSprite('БАНК', '#ffd34d'); s.position.set(b.x, b.y, b.z); }
   // clouds
-  const cloudMat = new THREE.MeshLambertMaterial({ color: '#ffffff', transparent: true, opacity: 0.88, fog: false });
-  clouds = [];
-  for (let i = 0; i < (isTouch ? 14 : 28); i++) {
-    const m = new THREE.Mesh(boxGeo(R(10, 24), 2.5, R(8, 16)), cloudMat);
-    m.position.set(R(-80, W + 80), R(68, 78), R(-80, D + 80)); scene.add(m); clouds.push(m);
-  }
+  const cl = [];
+  for (let i = 0; i < 28; i++) cl.push(bx(R(10, 24), 2.5, R(8, 16), '#ffffff', R(-180, 180), R(68, 78), R(-180, 180)));
+  cloudMesh = new THREE.Mesh(mergeBoxes(cl), new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.88, fog: false }));
+  cloudMesh.position.set(W / 2, 0, D / 2); scene.add(cloudMesh);
   // block outline
   outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.005, 1.005, 1.005)), new THREE.LineBasicMaterial({ color: '#000000', transparent: true, opacity: 0.6 }));
   scene.add(outline);
 }
-let clouds = [], outline = null;
+let cloudMesh = null, outline = null;
 
 
 // ------------------------------------------------------------
@@ -1486,24 +1542,41 @@ let clouds = [], outline = null;
 const phys = new CANNON.World({ gravity: new CANNON.Vec3(0, -24, 0) });
 phys.broadphase = new CANNON.SAPBroadphase(phys);
 phys.allowSleep = true;
+phys.solver.iterations = 6;
 phys.defaultContactMaterial.friction = 0.5;
 phys.defaultContactMaterial.restitution = 0.15;
+const GRP_DEBRIS = 1, GRP_STATIC = 2, GRP_CAR = 4;
+const groundBody = new CANNON.Body({ mass: 0, shape: new CANNON.Plane(), collisionFilterGroup: GRP_STATIC, collisionFilterMask: GRP_DEBRIS });
+groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+groundBody.position.set(0, G, 0);
+phys.addBody(groundBody);
 const voxShape = new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5));
 const debris = [];
-const MAX_DEBRIS = isTouch ? 70 : 180;
+const MAX_DEBRIS = isTouch ? 45 : 110;
 let physFrame = 0, trafficT = 2;
+
+// debris is drawn with instancing: one draw call per block type, one for car parts
 const debrisMat = new THREE.MeshLambertMaterial({ map: atlasTex });
 const blockGeoCache = new Map();
-function blockGeo(b, sz) {
-  const key = b + '_' + sz;
-  if (blockGeoCache.has(key)) return blockGeoCache.get(key);
-  const g = new THREE.BoxGeometry(sz, sz, sz), uv = g.attributes.uv, t = BL[b].t;
+function blockGeo(b) {
+  if (blockGeoCache.has(b)) return blockGeoCache.get(b);
+  const g = new THREE.BoxGeometry(1, 1, 1), uv = g.attributes.uv, t = BL[b].t;
   for (let f = 0; f < 6; f++) {
     const [u0, v0, u1, v1] = tileUV(f === 2 ? t[0] : f === 3 ? t[2] : t[1]);
     for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, u0 + uv.getX(i) * (u1 - u0), v0 + uv.getY(i) * (v1 - v0)); }
   }
-  blockGeoCache.set(key, g); return g;
+  blockGeoCache.set(b, g); return g;
 }
+const blockIMs = new Map();
+function blockIM(b) {
+  if (blockIMs.has(b)) return blockIMs.get(b);
+  const im = new THREE.InstancedMesh(blockGeo(b), debrisMat, MAX_DEBRIS);
+  im.count = 0; im.frustumCulled = false; scene.add(im); blockIMs.set(b, im); return im;
+}
+const partsIM = new THREE.InstancedMesh(BOX_TPL, new THREE.MeshLambertMaterial(), MAX_DEBRIS);
+partsIM.setColorAt(0, new THREE.Color()); partsIM.count = 0; partsIM.frustumCulled = false; scene.add(partsIM);
+
+const voxRange = r => r;
 function voxelChanged(x, y, z) {
   const k = idx(x, y, z), v = voxBodies.get(k);
   if (!v || isSolid(world[k])) return;
@@ -1511,43 +1584,44 @@ function voxelChanged(x, y, z) {
   for (const d of debris) if (Math.abs(d.body.position.x - x) < 3 && Math.abs(d.body.position.z - z) < 3) d.body.wakeUp();
 }
 function ensureVoxelsAround(p, r) {
+  // the ground is a single plane; only blocks standing above it get colliders
   const x0 = Math.max(0, Math.floor(p.x - r)), x1 = Math.min(W - 1, Math.floor(p.x + r));
-  const y0 = Math.max(0, Math.floor(p.y - r)), y1 = Math.min(H - 1, Math.floor(p.y + r));
+  const y0 = Math.max(G, Math.floor(p.y - r)), y1 = Math.min(H - 1, Math.floor(p.y + r));
   const z0 = Math.max(0, Math.floor(p.z - r)), z1 = Math.min(D - 1, Math.floor(p.z + r));
   for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
     const k = idx(x, y, z);
     if (!isSolid(world[k])) continue;
     const v = voxBodies.get(k);
     if (v) { v.used = physFrame; continue; }
-    const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: voxShape });
+    const body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC, shape: voxShape, collisionFilterGroup: GRP_STATIC, collisionFilterMask: GRP_DEBRIS });
     body.position.set(x + 0.5, y + 0.5, z + 0.5);
     phys.addBody(body);
     voxBodies.set(k, { body, used: physFrame });
   }
 }
 function removeDebris(d) {
-  scene.remove(d.mesh); phys.removeBody(d.body);
+  phys.removeBody(d.body);
   const i = debris.indexOf(d); if (i >= 0) debris.splice(i, 1);
 }
-function addDebris(mesh, hx, hy, hz, vel, life = 22) {
+function addDebris(rec, pos, quat, hx, hy, hz, vel, life) {
   if (debris.length >= MAX_DEBRIS) removeDebris(debris[0]);
   const body = new CANNON.Body({
-    mass: Math.max(0.4, hx * hy * hz * 8 * 2), shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)),
-    linearDamping: 0.05, angularDamping: 0.15, sleepSpeedLimit: 0.35, sleepTimeLimit: 0.7,
+    mass: Math.max(0.4, hx * hy * hz * 16), shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)),
+    linearDamping: 0.08, angularDamping: 0.2, sleepSpeedLimit: 0.5, sleepTimeLimit: 0.5,
+    collisionFilterGroup: GRP_DEBRIS, collisionFilterMask: GRP_DEBRIS | GRP_STATIC | GRP_CAR,
   });
-  body.position.set(mesh.position.x, mesh.position.y, mesh.position.z);
-  body.quaternion.set(mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w);
+  body.position.set(pos.x, Math.max(pos.y, G + hy + 0.02), pos.z);
+  body.quaternion.set(quat.x, quat.y, quat.z, quat.w);
   body.velocity.set(vel.x, vel.y, vel.z);
   body.angularVelocity.set(mr(-7, 7), mr(-7, 7), mr(-7, 7));
-  phys.addBody(body); scene.add(mesh);
-  ensureVoxelsAround(body.position, Math.max(hx, hy, hz) + 1.3);
-  debris.push({ mesh, body, life, r: Math.max(hx, hy, hz) + 1.3 });
+  phys.addBody(body);
+  rec.body = body; rec.life = life; rec.r = Math.max(hx, hy, hz) + 0.6;
+  ensureVoxelsAround(body.position, rec.r);
+  debris.push(rec);
 }
 function blockDebris(x, y, z, b, size, vel) {
-  const m = new THREE.Mesh(blockGeo(b, size), debrisMat);
-  m.position.set(x + 0.5 + mr(-0.15, 0.15), y + 0.5, z + 0.5 + mr(-0.15, 0.15));
-  m.rotation.set(mr(-0.3, 0.3), mr(0, 3), mr(-0.3, 0.3));
-  addDebris(m, size / 2, size / 2, size / 2, vel);
+  _q.setFromEuler(_e.set(mr(-0.3, 0.3), mr(0, 3), mr(-0.3, 0.3)));
+  addDebris({ kind: 'block', b, size }, { x: x + 0.5 + mr(-0.15, 0.15), y: y + 0.5, z: z + 0.5 + mr(-0.15, 0.15) }, _q, size / 2, size / 2, size / 2, vel, 12);
 }
 function blastDebris(x, y, z, radius, power) {
   for (const d of debris) {
@@ -1572,20 +1646,19 @@ function fellTree(x, y, z, dirX, dirZ, push) {
     q.push([cx + 1, cy, cz], [cx - 1, cy, cz], [cx, cy + 1, cz], [cx, cy - 1, cz], [cx, cy, cz + 1], [cx, cy, cz - 1]);
   }
   if (!out.length) return;
-  // only fall if nothing else holds the tree up
-  for (const [cx, cy, cz] of out) if (cy === y && cx === x && cz === z) return;
   let n = 0;
   for (const [cx, cy, cz, b] of out) {
     setBlock(cx, cy, cz, 0);
     const h = cy - y;
-    if (b === B.LOG || n++ % 2 === 0) blockDebris(cx, cy, cz, b, 1, { x: dirX * push * (0.4 + h * 0.35) + mr(-0.4, 0.4), y: mr(0, 1), z: dirZ * push * (0.4 + h * 0.35) + mr(-0.4, 0.4) });
+    if (b === B.LOG || n++ % (isTouch ? 4 : 2) === 0) blockDebris(cx, cy, cz, b, 1, { x: dirX * push * (0.4 + h * 0.35) + mr(-0.4, 0.4), y: mr(0, 1), z: dirZ * push * (0.4 + h * 0.35) + mr(-0.4, 0.4) });
+    else spawnParticles(cx + 0.5, cy + 0.5, cz + 0.5, BL[b].c, 1, 2);
   }
 }
 
 // a fast car knocks blocks out of walls
 function smashBlocks(car, imp) {
   const s = Math.sin(car.heading), co = Math.cos(car.heading), dir = car.speed >= 0 ? 1 : -1;
-  const top = imp > 22 ? G + 3 : G + 2, maxN = imp > 22 ? 16 : 8;
+  const top = imp > 22 ? G + 3 : G + 2, maxN = imp > 22 ? 14 : 7;
   let n = 0;
   const done = new Set();
   for (const reach of [2.3, 2.9, imp > 22 ? 3.6 : 2.9]) for (const lx of [-1.3, -0.6, 0, 0.6, 1.3]) {
@@ -1596,57 +1669,55 @@ function smashBlocks(car, imp) {
       if (done.has(k) || !isSolid(b) || n >= maxN) continue;
       done.add(k); n++;
       setBlock(bx, y, bz, 0); placed.delete(k);
-      const v = imp * mr(0.35, 0.75);
-      const vel = { x: s * dir * v + mr(-2, 2), y: mr(1.5, 5), z: co * dir * v + mr(-2, 2) };
       if (b === B.TNT) { igniteTNT(bx, y, bz, 0.4); continue; }
-      blockDebris(bx, y, bz, b, 0.55, vel);
-      blockDebris(bx, y, bz, b, 0.5, { x: vel.x * 0.8, y: vel.y + 1, z: vel.z * 0.8 });
+      const v = imp * mr(0.35, 0.75);
+      blockDebris(bx, y, bz, b, 0.7, { x: s * dir * v + mr(-2, 2), y: mr(1.5, 5), z: co * dir * v + mr(-2, 2) });
+      spawnParticles(bx + 0.5, y + 0.5, bz + 0.5, BL[b].c, 2, 3);
       if (b === B.LOG) fellTree(bx, y, bz, s * dir, co * dir, imp * 0.15);
     }
   }
   if (n) {
     sfx.brk(); sfx.crash(); camShake = Math.max(camShake, Math.min(0.7, imp / 35));
-    spawnParticles(car.pos.x + s * dir * 2.6, G + 1, car.pos.z + co * dir * 2.6, '#9a9a9a', 8, 4);
+    spawnParticles(car.pos.x + s * dir * 2.6, G + 1, car.pos.z + co * dir * 2.6, '#9a9a9a', 6, 4);
   }
   return n;
 }
 
 // ---- car damage: parts fly off, then the whole car falls apart
-function detachPart(car, mesh, force) {
-  const wp = new THREE.Vector3(), wq = new THREE.Quaternion();
-  mesh.getWorldPosition(wp); mesh.getWorldQuaternion(wq);
-  car.model.g.remove(mesh);
-  mesh.position.copy(wp); mesh.quaternion.copy(wq);
-  const p = mesh.geometry.parameters;
-  const out = new THREE.Vector3(wp.x - car.pos.x, 0, wp.z - car.pos.z);
-  if (out.lengthSq() < 0.01) out.set(mr(-1, 1), 0, mr(-1, 1));
-  out.normalize();
-  const fx = Math.sin(car.heading) * car.speed * 0.6, fz = Math.cos(car.heading) * car.speed * 0.6;
-  addDebris(mesh, Math.max(0.04, p.width / 2), Math.max(0.04, p.height / 2), Math.max(0.04, p.depth / 2),
-    { x: fx + out.x * mr(2, 6) * force, y: mr(2.5, 6.5) * force, z: fz + out.z * mr(2, 6) * force }, 26);
+const _wp = new THREE.Vector3();
+function detachPart(car, part, force) {
+  part.gone = true;
+  const s = Math.sin(car.heading), co = Math.cos(car.heading);
+  _wp.set(car.pos.x + co * part.x + s * part.z, G + part.y, car.pos.z - s * part.x + co * part.z);
+  if (part.small) { spawnParticles(_wp.x, _wp.y, _wp.z, part.color, 2, 3); return; }
+  const out = { x: _wp.x - car.pos.x, z: _wp.z - car.pos.z }, l = Math.hypot(out.x, out.z) || 1;
+  const fx = s * car.speed * 0.6, fz = co * car.speed * 0.6;
+  _q.setFromEuler(_e.set(0, car.heading, 0));
+  addDebris({ kind: 'part', w: part.w, h: part.h, d: part.d, c: colorOf(part.color) }, _wp, _q,
+    Math.max(0.05, part.w / 2), Math.max(0.05, part.h / 2), Math.max(0.05, part.d / 2),
+    { x: fx + out.x / l * mr(2, 6) * force, y: mr(2.5, 6.5) * force, z: fz + out.z / l * mr(2, 6) * force }, 16);
 }
 function damageCar(car, dmg) {
   if (!car || car.dead || dmg <= 0) return;
   car.hp -= dmg;
-  const parts = car.model.g.children.filter(m => m.userData.detach);
-  let n = Math.floor(dmg / 9 + Math.random() * 0.9);
-  while (n-- > 0 && parts.length) detachPart(car, parts.splice(Math.floor(Math.random() * parts.length), 1)[0], 1);
-  if (dmg > 6) { if (AC) { const t = AC.currentTime; tone(t, 0.12, mr(500, 900), 0.08, 'square', master, 200); } }
+  const parts = car.model.parts.filter(p => p.detach && !p.gone);
+  let n = Math.floor(dmg / 9 + Math.random() * 0.9), changed = false;
+  while (n-- > 0 && parts.length) { detachPart(car, parts.splice(Math.floor(Math.random() * parts.length), 1)[0], 1); changed = true; }
+  if (car.model.bar && dmg > 15 && Math.random() < 0.4) { for (const m of car.model.bar) car.model.g.remove(m); car.model.bar = null; spawnParticles(car.pos.x, G + 1.8, car.pos.z, '#ff2020', 3, 3); }
+  if (changed && car.hp > 0) rebuildCar(car);
+  if (dmg > 6 && AC) { const t = AC.currentTime; tone(t, 0.12, mr(500, 900), 0.08, 'square', master, 200); }
 }
 function destroyCar(car) {
   if (car.dead) return;
   car.dead = true;
   const wasPlayer = player.inCar === car;
-  car.model.g.position.set(car.pos.x, G, car.pos.z); car.model.g.updateMatrixWorld(true);
-  for (const m of [...car.model.g.children]) detachPart(car, m, 1.7);
+  for (const part of car.model.parts) if (!part.gone) detachPart(car, part, 1.7);
   const p = { x: car.pos.x, z: car.pos.z };
   removeCar(car);
   sfx.boom(); camShake = Math.max(camShake, 0.7);
-  const flash = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: '#ff9a3c', transparent: true, opacity: 0.9 }));
-  flash.position.set(p.x, G + 1, p.z); scene.add(flash);
-  particles.push({ m: flash, v: new THREE.Vector3(), life: 0.4, flash: true });
-  spawnParticles(p.x, G + 1, p.z, '#ff8c1a', 16, 8);
-  for (let i = 0; i < 12; i++) spawnParticles(p.x + mr(-1, 1), G + 1.2, p.z + mr(-1, 1), mpick(['#222222', '#444444']), 1, 1, -3);
+  addFlash(p.x, G + 1, p.z, '#ff9a3c');
+  spawnParticles(p.x, G + 1, p.z, '#ff8c1a', 12, 8);
+  for (let i = 0; i < 8; i++) spawnParticles(p.x + mr(-1, 1), G + 1.2, p.z + mr(-1, 1), mpick(['#222222', '#444444']), 1, 1, -3);
   blastDebris(p.x, G + 0.5, p.z, 8, 9);
   for (const pd of peds) { const d = Math.hypot(pd.pos.x - p.x, pd.pos.z - p.z); if (d < 5) knockPed(pd, (pd.pos.x - p.x) * 2, 7, (pd.pos.z - p.z) * 2); }
   const tp = player.inCar ? player.inCar.pos : player.pos, pdist = Math.hypot(tp.x - p.x, tp.z - p.z);
@@ -1655,41 +1726,64 @@ function destroyCar(car) {
 }
 
 function updatePhysics(dt) {
+  if (!debris.length) {
+    for (const im of blockIMs.values()) im.count = 0;
+    partsIM.count = 0;
+    if (voxBodies.size) { for (const v of voxBodies.values()) phys.removeBody(v.body); voxBodies.clear(); }
+    return;
+  }
   physFrame++;
+  // only cars near flying pieces take part in the simulation
   for (const c of cars) {
+    let near = false;
+    for (const d of debris) if (Math.abs(d.body.position.x - c.pos.x) < 6 && Math.abs(d.body.position.z - c.pos.z) < 6) { near = true; break; }
     const b = c.kbody;
+    if (near !== c.kIn) { if (near) phys.addBody(b); else phys.removeBody(b); c.kIn = near; }
+    if (!near) continue;
     b.position.set(c.pos.x, G + 0.75, c.pos.z);
     b.quaternion.setFromEuler(0, c.heading, 0);
     b.velocity.set(Math.sin(c.heading) * c.speed, 0, Math.cos(c.heading) * c.speed);
   }
-  for (const d of debris) if (d.body.sleepState !== CANNON.Body.SLEEPING || physFrame % 30 === 0) ensureVoxelsAround(d.body.position, d.r);
-  phys.step(1 / 60, dt, 3);
+  for (const d of debris) if (d.body.sleepState !== CANNON.Body.SLEEPING) ensureVoxelsAround(d.body.position, d.r);
+  phys.step(1 / 50, dt, 2);
+  for (const im of blockIMs.values()) im.count = 0;
+  partsIM.count = 0;
   for (let i = debris.length - 1; i >= 0; i--) {
     const d = debris[i];
     d.life -= dt;
-    d.mesh.position.set(d.body.position.x, d.body.position.y, d.body.position.z);
-    d.mesh.quaternion.set(d.body.quaternion.x, d.body.quaternion.y, d.body.quaternion.z, d.body.quaternion.w);
-    if (d.life < 1.5) d.mesh.scale.setScalar(Math.max(0.01, d.life / 1.5));
-    if (d.life <= 0 || d.body.position.y < -6) removeDebris(d);
+    if (d.life <= 0 || d.body.position.y < -6) { removeDebris(d); continue; }
+    const k = d.life < 1.2 ? Math.max(0.01, d.life / 1.2) : 1;
+    _p.set(d.body.position.x, d.body.position.y, d.body.position.z);
+    _q.set(d.body.quaternion.x, d.body.quaternion.y, d.body.quaternion.z, d.body.quaternion.w);
+    if (d.kind === 'block') {
+      const im = blockIM(d.b);
+      im.setMatrixAt(im.count++, _m4.compose(_p, _q, _s.setScalar(d.size * k)));
+    } else {
+      partsIM.setMatrixAt(partsIM.count, _m4.compose(_p, _q, _s.set(d.w * k, d.h * k, d.d * k)));
+      partsIM.setColorAt(partsIM.count++, d.c);
+    }
   }
-  if (physFrame % 60 === 0) {
-    for (const [k, v] of voxBodies) if (physFrame - v.used > 90) { phys.removeBody(v.body); voxBodies.delete(k); }
+  for (const im of blockIMs.values()) im.instanceMatrix.needsUpdate = true;
+  partsIM.instanceMatrix.needsUpdate = true; partsIM.instanceColor.needsUpdate = true;
+  if (physFrame % 30 === 0) {
+    for (const [k, v] of voxBodies) if (physFrame - v.used > 45) { phys.removeBody(v.body); voxBodies.delete(k); }
   }
 }
 
-// ------------------------------------------------------------
-//  Main loop
-// ------------------------------------------------------------
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (started && !paused) step(dt);
+  const t0 = performance.now();
+  if (started && !paused) { step(dt); perf.step = perf.step * 0.9 + (performance.now() - t0) * 0.1; }
   else if (!started) { const a = now / 9000; const cx = nodeX(3.5), cz = nodeX(3.5); camera.position.set(cx + Math.cos(a) * 70, 48, cz + Math.sin(a) * 70); camera.lookAt(cx, 14, cz); }
-  for (const k of dirty) { buildChunk(k % CX, Math.floor(k / CX)); }
-  dirty.clear();
+  let built = 0;
+  for (const k of dirty) { buildChunk(k % CX, Math.floor(k / CX)); dirty.delete(k); if (++built >= 4) break; }
   renderer.render(scene, camera);
+  perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
 }
+const perf = { step: 0, calls: 0, tris: 0 };
+window.__perf = () => ({ ...perf, bodies: phys.bodies.length, debris: debris.length });
 function step(dt) {
   gameTime += dt;
   readInput();
@@ -1701,7 +1795,9 @@ function step(dt) {
     else if (c.ai === 'parked') c.speed *= Math.max(0, 1 - 3 * dt), c.speed && driveCar(c, 0, 0, true, dt);
   }
   carCollisions(dt);
-  for (const c of cars) { c.model.g.position.set(c.pos.x, G, c.pos.z); c.model.g.rotation.y = c.heading; }
+  const vp = player.inCar ? player.inCar.pos : player.pos, V2 = (VIEW - 10) * (VIEW - 10);
+  for (const c of cars) { c.model.g.position.set(c.pos.x, G, c.pos.z); c.model.g.rotation.y = c.heading; c.model.g.visible = (c.pos.x - vp.x) ** 2 + (c.pos.z - vp.z) ** 2 < V2; }
+  for (const p of peds) p.h.g.visible = (p.pos.x - vp.x) ** 2 + (p.pos.z - vp.z) ** 2 < V2;
   for (const c of [...cars]) {
     if (c.hp <= 0) { destroyCar(c); continue; }
     if (c.hp < c.maxHp * 0.4 && (c.smokeT -= dt) <= 0) {
@@ -1732,13 +1828,12 @@ function step(dt) {
     t.m.scale.setScalar(1 + Math.max(0, 0.4 - t.timer) * 0.4);
     if (t.timer <= 0) { scene.remove(t.m); tnts.splice(i, 1); explode(t.x, t.y, t.z, 3.6); }
   }
-  for (const p of particles) if (p.flash && p.life > 0) { p.m.scale.setScalar(1 + (0.4 - p.life) * 18); p.m.material.opacity = p.life * 2; }
   updateParticles(dt);
   // regen
   if (stars === 0 && deadTimer <= 0) player.health = Math.min(100, player.health + dt * 3);
   if (player.hurtFlash > 0) player.hurtFlash -= dt;
   // clouds
-  for (const c of clouds) { c.position.x += dt * 1.5; if (c.position.x > W + 90) c.position.x = -90; }
+  if (cloudMesh) cloudMesh.rotation.y += dt * 0.004;
   updateCamera(dt);
   // outline
   const hit = !player.inCar && deadTimer <= 0 ? currentAim() : null;
@@ -1781,5 +1876,6 @@ function boot() {
 // allow the menu to render first
 setTimeout(boot, 30);
 window.__gt = () => gameTime;
+window.__step = dt => step(dt);
 window.__cam = () => [camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1), yaw.toFixed(2), pitch.toFixed(2), camDist.toFixed(2)];
 window.__game = { player, cars, peds, debris, damageCar, currentAim, actionPrimary, actionSecondary, select, enterCar, keys, get stars() { return stars; }, addHeat, setYaw: (y, p) => { yaw = y; pitch = p; } };
