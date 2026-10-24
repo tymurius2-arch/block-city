@@ -25,10 +25,13 @@ const pick = arr => arr[Math.floor(rnd() * arr.length)];
 // ------------------------------------------------------------
 //  World constants
 // ------------------------------------------------------------
-const W = 192, D = 192, H = 48, G = 4;   // ground surface is at y = G
+const W = 512, D = 512, H = 64, G = 4;   // ground surface is at y = G
 const CH = 16;                            // chunk size
-const OFF = 8;                            // city offset from world edge
-const NODES = 8;                          // 8x8 road intersections
+const OFF = 24;                           // city offset from world edge (beach + ocean)
+const NODES = 20;                         // 20x20 road intersections
+const LOTS = NODES - 1;                   // 19x19 city blocks
+const CITY = 24 * LOTS + 7;               // city size in blocks
+const MID = (LOTS - 1) / 2;               // centre lot index
 const nodeX = i => OFF + 24 * i + 3.5;
 
 // ------------------------------------------------------------
@@ -166,9 +169,11 @@ function solidAt(x, y, z) {
   return isSolid(world[idx(x, y, z)]);
 }
 const voxBodies = new Map();   // physics colliders for voxels near debris
+const chunkTop = new Uint8Array((W / 16) * (D / 16));
 function put(x, y, z, b) {
   if (x >= 0 && z >= 0 && x < W && z < D && y >= 0 && y < H) {
     world[idx(x, y, z)] = b;
+    if (b) { const ck = (z >> 4) * (W / 16) + (x >> 4); if (y + 1 > chunkTop[ck]) chunkTop[ck] = y + 1; }
     if (voxBodies.size) voxelChanged(x, y, z);
   }
 }
@@ -180,7 +185,7 @@ function fill(x0, y0, z0, x1, y1, z1, b) { for (let y = y0; y < y1; y++) for (le
 const lots = [];        // {i,j,type,x0,z0}
 const parkedSpots = []; // {x,z,heading,kind}
 const bankLabels = [];  // {x,y,z}
-const isRoadL = l => l >= 0 && l < 175 && (l % 24) < 7;
+const isRoadL = l => l >= 0 && l < CITY && (l % 24) < 7;
 
 function tree(x, y, z) {
   const h = RI(4, 5);
@@ -229,10 +234,10 @@ function generate() {
     const lx = x - OFF, lz = z - OFF;
     put(x, 0, z, B.STONE);
     for (let y = 1; y < G - 1; y++) put(x, y, z, B.DIRT);
-    const inCity = lx >= -2 && lx < 177 && lz >= -2 && lz < 177;
+    const inCity = lx >= -2 && lx < CITY + 2 && lz >= -2 && lz < CITY + 2;
     let top;
     if (!inCity) {
-      const d = Math.max(-2 - lx, lx - 176, -2 - lz, lz - 176);
+      const d = Math.max(-2 - lx, lx - CITY - 1, -2 - lz, lz - CITY - 1);
       if (d >= 6) { top = B.WATER; put(x, G - 2, z, B.WATER); put(x, G - 3, z, B.SAND); }
       else top = B.SAND;
     } else {
@@ -246,22 +251,24 @@ function generate() {
     put(x, G - 1, z, top);
   }
   // palms on the beach
-  for (let k = 0; k < 70; k++) {
+  for (let k = 0; k < 200; k++) {
     const side = RI(0, 3), t = RI(4, W - 5), o = RI(1, 4);
     let x, z;
-    if (side === 0) { x = t; z = OFF - 3 - o; } else if (side === 1) { x = t; z = OFF + 177 + o - 1; }
-    else if (side === 2) { z = t; x = OFF - 3 - o; } else { z = t; x = OFF + 177 + o - 1; }
+    if (side === 0) { x = t; z = OFF - 3 - o; } else if (side === 1) { x = t; z = OFF + CITY + 2 + o - 1; }
+    else if (side === 2) { z = t; x = OFF - 3 - o; } else { z = t; x = OFF + CITY + 2 + o - 1; }
     if (get(x, G - 1, z) === B.SAND && get(x, G, z) === 0) palm(x, G, z);
   }
-  // lots
-  const types = [];
-  const add = (t, n) => { for (let i = 0; i < n; i++) types.push(t); };
-  add('bank', 3); add('park', 6); add('plaza', 3); add('house', 10); add('shop', 8); add('tower', 18);
-  for (let i = types.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [types[i], types[j]] = [types[j], types[i]]; }
-  let n = 0;
-  for (let j = 0; j < 7; j++) for (let i = 0; i < 7; i++) {
-    let type = (i === 3 && j === 3) ? 'plaza' : types[n++ % types.length];
-    if (i === 3 && j === 3) n--; // keep the shuffled list intact
+  // lots: districts from downtown to the suburbs
+  const wpick = table => { let t = rnd() * table.reduce((a, e) => a + e[1], 0); for (const [k, w] of table) if ((t -= w) <= 0) return k; return table[0][0]; };
+  for (let j = 0; j < LOTS; j++) for (let i = 0; i < LOTS; i++) {
+    const r = Math.max(Math.abs(i - MID), Math.abs(j - MID)) / MID;
+    let type;
+    if (i === MID && j === MID) type = 'plaza';
+    else if (r <= 0.25) type = wpick([['skyscraper', 70], ['bank', 8], ['plaza', 10], ['park', 6], ['shop', 6]]);
+    else if (r <= 0.6) type = wpick([['tower', 32], ['shop', 26], ['house', 14], ['park', 10], ['plaza', 7], ['bank', 3], ['factory', 3]]);
+    else if (i > MID && j > MID) type = wpick([['factory', 60], ['plaza', 15], ['shop', 10], ['park', 8], ['house', 7]]);
+    else if (i < MID && j > MID) type = wpick([['farm', 50], ['house', 30], ['park', 20]]);
+    else type = wpick([['house', 62], ['park', 18], ['shop', 12], ['plaza', 5], ['bank', 3]]);
     const x0 = OFF + 24 * i + 9, z0 = OFF + 24 * j + 9;
     lots.push({ i, j, type, x0, z0 });
     buildLot(type, x0, z0);
@@ -271,9 +278,9 @@ function generate() {
 function buildLot(type, x0, z0) {
   const S = 13;
   if (type === 'park' || type === 'house') fill(x0, G - 1, z0, x0 + S, G, z0 + S, B.GRASS);
-  if (type === 'tower') {
+  if (type === 'tower' || type === 'skyscraper') {
     const pal = pick([[B.CONC, B.GLASS], [B.CONC, B.GLASSD], [B.STONE, B.GLASS], [B.BRICK, B.GLASSD], [B.CONC, B.GLASSD]]);
-    const h = RI(14, 34);
+    const h = type === 'skyscraper' ? RI(28, H - G - 14) : RI(12, 30);
     building(x0 + 1, z0 + 1, 11, 11, h, pal[0], pal[1], B.ROOF, { parapet: true });
     if (rnd() < 0.5 && G + h + 10 < H - 2) {
       const h2 = RI(4, Math.min(10, H - 4 - G - h));
@@ -305,13 +312,28 @@ function buildLot(type, x0, z0) {
       tree(tx, G, tz);
     }
   } else if (type === 'plaza') {
-    for (const cx of [2.5, 6.5, 10.5]) parkedSpots.push({ x: x0 + cx, z: z0 + 6.5, heading: rnd() < 0.5 ? 0 : Math.PI });
+    for (const cx of [3.5, 9.5]) parkedSpots.push({ x: x0 + cx, z: z0 + 6.5, heading: rnd() < 0.5 ? 0 : Math.PI });
     palm(x0, G, z0); palm(x0 + S - 1, G, z0 + S - 1);
   } else if (type === 'bank') {
     building(x0 + 2, z0 + 2, 9, 9, 8, B.CONC, B.GLASSD, B.ROOF, { band: B.GOLD, parapet: true });
     put(x0 + 2, G + 10, z0 + 2, B.DIAM); put(x0 + 10, G + 10, z0 + 2, B.DIAM);
     put(x0 + 2, G + 10, z0 + 10, B.DIAM); put(x0 + 10, G + 10, z0 + 10, B.DIAM);
     bankLabels.push({ x: x0 + 6.5, y: G + 13, z: z0 + 6.5 });
+  } else if (type === 'factory') {
+    const h = RI(6, 9);
+    building(x0 + 1, z0 + 1, 11, 9, h, pick([B.STONE, B.BRICK, B.CONC]), B.GLASSD, B.ROOF, { parapet: true });
+    const cx = x0 + RI(2, 9), top = Math.min(H - 2, G + h + RI(8, 14));
+    for (let y = G + h + 1; y < top; y++) fill(cx, y, z0 + 3, cx + 2, y + 1, z0 + 5, y > top - 3 ? B.STONE : B.BRICK);
+    for (let k = 0; k < 4; k++) { const px = x0 + RI(1, 11), pz = z0 + 11; put(px, G, pz, B.PLANK); if (rnd() < 0.5) put(px, G + 1, pz, B.PLANK); }
+  } else if (type === 'farm') {
+    fill(x0, G - 1, z0, x0 + S, G, z0 + S, B.DIRT);
+    for (let z = z0; z < z0 + S; z++) for (let x = x0 + 5; x < x0 + S; x++) {
+      if (z === z0 + 6) put(x, G - 1, z, B.WATER);
+      else if ((z - z0) % 2 === 0) put(x, G, z, B.LEAF);
+    }
+    fill(x0, G - 1, z0, x0 + 5, G, z0 + S, B.GRASS);
+    building(x0, z0 + 3, 5, 6, 4, B.PLANK, B.PLANK, B.ROOF, {});
+    tree(x0 + 2, G, z0 + 11);
   }
 }
 generate();
@@ -360,12 +382,30 @@ const AOV = [0.45, 0.65, 0.83, 1.0];
 const chunkMat = new THREE.MeshLambertMaterial({ map: atlasTex, vertexColors: true });
 const CX = W / CH, CZ = D / CH;
 const chunkMeshes = new Array(CX * CZ).fill(null);
+const chunkBuilt = new Uint8Array(CX * CZ);
+// build the chunks nearest to (x, z) that are not built yet
+function streamChunks(x, z, radius, budget) {
+  const pcx = Math.floor(x / CH), pcz = Math.floor(z / CH), R = Math.ceil(radius / CH);
+  let bestK = -1, bestD = 1e9, n = 0;
+  while (n < budget) {
+    bestK = -1; bestD = 1e9;
+    for (let cz = Math.max(0, pcz - R); cz <= Math.min(CZ - 1, pcz + R); cz++) for (let cx = Math.max(0, pcx - R); cx <= Math.min(CX - 1, pcx + R); cx++) {
+      const k = cz * CX + cx; if (chunkBuilt[k]) continue;
+      const d = (cx - pcx) ** 2 + (cz - pcz) ** 2;
+      if (d < bestD && d <= R * R) { bestD = d; bestK = k; }
+    }
+    if (bestK < 0) return;
+    buildChunk(bestK % CX, Math.floor(bestK / CX)); n++;
+  }
+}
 const dirty = new Set();
 
 function buildChunk(cx, cz) {
   const P = [], N = [], U = [], C = [], I = [];
   let vc = 0;
-  for (let y = 0; y < H; y++) for (let z = cz * CH; z < cz * CH + CH; z++) for (let x = cx * CH; x < cx * CH + CH; x++) {
+  const yTop = Math.min(H, chunkTop[cz * CX + cx] + 1);
+  chunkBuilt[cz * CX + cx] = 1;
+  for (let y = 0; y < yTop; y++) for (let z = cz * CH; z < cz * CH + CH; z++) for (let x = cx * CH; x < cx * CH + CH; x++) {
     const b = world[idx(x, y, z)];
     if (!b) continue;
     const def = BL[b];
@@ -551,7 +591,7 @@ function textSprite(text, color, size = 64) {
 // ------------------------------------------------------------
 //  Game state
 // ------------------------------------------------------------
-const SPAWN = { x: OFF + 24 * 3 + 8, z: OFF + 24 * 3 + 8 };
+const SPAWN = { x: OFF + 24 * MID + 8, z: OFF + 24 * MID + 8 };
 const player = {
   pos: new THREE.Vector3(SPAWN.x, G, SPAWN.z), vel: new THREE.Vector3(), onGround: false,
   health: 100, money: 0, inCar: null, facing: 0, punchCD: 0, hurtFlash: 0,
@@ -572,7 +612,28 @@ function neighbors(n) {
   if (n[1] > 0) r.push([n[0], n[1] - 1]); if (n[1] < NODES - 1) r.push([n[0], n[1] + 1]);
   return r;
 }
-const nearestNode = (x, z) => [clamp(Math.round((x - OFF - 3.5) / 24), 0, 7), clamp(Math.round((z - OFF - 3.5) / 24), 0, 7)];
+const nearestNode = (x, z) => [clamp(Math.round((x - OFF - 3.5) / 24), 0, NODES - 1), clamp(Math.round((z - OFF - 3.5) / 24), 0, NODES - 1)];
+// a random road node between minD and maxD blocks from (x, z)
+function nodeNear(x, z, minD, maxD) {
+  const c = nearestNode(x, z), r = Math.ceil(maxD / 24);
+  for (let t = 0; t < 40; t++) {
+    const n = [clamp(c[0] + Math.round(mr(-r, r)), 0, NODES - 1), clamp(c[1] + Math.round(mr(-r, r)), 0, NODES - 1)];
+    const p = nodePos(n), d = Math.hypot(p.x - x, p.z - z);
+    if (d >= minD && d <= maxD) return n;
+  }
+  return null;
+}
+// a random city block near (x, z)
+function lotNear(x, z, minD, maxD) {
+  const r = Math.ceil(maxD / 24);
+  const ci = clamp(Math.floor((x - OFF - 9) / 24), 0, LOTS - 1), cj = clamp(Math.floor((z - OFF - 9) / 24), 0, LOTS - 1);
+  for (let t = 0; t < 40; t++) {
+    const i = clamp(ci + Math.round(mr(-r, r)), 0, LOTS - 1), j = clamp(cj + Math.round(mr(-r, r)), 0, LOTS - 1);
+    const d = Math.hypot(OFF + 24 * i + 15.5 - x, OFF + 24 * j + 15.5 - z);
+    if (d >= minD && d <= maxD) return [i, j];
+  }
+  return [ci, cj];
+}
 
 // ---------- cars
 function addCar(kind, x, z, heading) {
@@ -591,10 +652,11 @@ function setTrafficRoute(car, from, to) {
 }
 function spawnTraffic(farFrom) {
   for (let tries = 0; tries < 30; tries++) {
-    const a = [Math.floor(Math.random() * 8), Math.floor(Math.random() * 8)];
+    const c = farFrom || player.pos;
+    const a = nodeNear(c.x, c.z, farFrom ? 50 : 0, VIEW - 10);
+    if (!a) continue;
     const b = mpick(neighbors(a));
     const p = nodePos(a);
-    if (farFrom && Math.hypot(p.x - farFrom.x, p.z - farFrom.z) < 45) continue;
     const kind = Math.random() < 0.15 ? 'taxi' : Math.random() < 0.12 ? 'sport' : 'sedan';
     const car = addCar(kind, p.x, p.z, 0);
     setTrafficRoute(car, a, b);
@@ -730,11 +792,8 @@ function ringCorners(i, j) {
   return [[ax, az], [bx, az], [bx, bz], [ax, bz]];
 }
 function placePed(p, farFrom) {
-  for (let t = 0; t < 20; t++) {
-    p.i = Math.floor(Math.random() * 7); p.j = Math.floor(Math.random() * 7);
-    const c = ringCorners(p.i, p.j)[0];
-    if (!farFrom || Math.hypot(c[0] - farFrom.x, c[1] - farFrom.z) > 40) break;
-  }
+  const c = farFrom || player.pos;
+  [p.i, p.j] = lotNear(c.x, c.z, farFrom ? 45 : 0, VIEW - 20);
   p.k = Math.floor(Math.random() * 4); p.t = Math.random() * 15; p.dir = Math.random() < 0.5 ? 1 : -1;
   p.base = mr(1.2, 1.9); p.state = 'walk'; p.timer = 0; p.side = mr(-0.6, 0.6);
   p.h.g.rotation.x = 0; p.h.g.visible = true;
@@ -793,7 +852,8 @@ function addPickup(x, z, value) {
   pickups.push({ m, x, z, value, t: Math.random() * 6 });
 }
 function randomSidewalkPickup() {
-  const i = Math.floor(Math.random() * 7), j = Math.floor(Math.random() * 7);
+  const tp = player.inCar ? player.inCar.pos : player.pos;
+  const [i, j] = lotNear(tp.x, tp.z, 20, 160);
   const c = ringCorners(i, j), k = Math.floor(Math.random() * 4);
   const a = c[k], b = c[(k + 1) % 4], f = Math.random();
   addPickup(lerp(a[0], b[0], f), lerp(a[1], b[1], f), Math.round(mr(1, 5)) * 100);
@@ -1270,13 +1330,11 @@ function managePolice(dt) {
   policeSpawnCD -= dt;
   if (police.length < want && policeSpawnCD <= 0) {
     policeSpawnCD = 2.5;
-    for (let t = 0; t < 30; t++) {
-      const n = [Math.floor(Math.random() * 8), Math.floor(Math.random() * 8)];
-      const p = nodePos(n), d = Math.hypot(p.x - tp.x, p.z - tp.z);
-      if (d < 45 || d > 90) continue;
+    const n = nodeNear(tp.x, tp.z, 45, 95);
+    if (n) {
+      const p = nodePos(n);
       const car = addCar('police', p.x, p.z, Math.atan2(tp.x - p.x, tp.z - p.z));
       car.ai = 'police'; car.wp = n;
-      break;
     }
   }
   if (stars === 0) {
@@ -1520,13 +1578,13 @@ function setupTouch() {
 // ------------------------------------------------------------
 function setupEntities() {
   for (const s of parkedSpots) addCar(Math.random() < 0.5 ? 'sport' : 'sedan', s.x, s.z, s.heading);
-  for (let i = 0; i < (isTouch ? 16 : 26); i++) spawnTraffic(player.pos);
-  for (let i = 0; i < (isTouch ? 26 : 44); i++) addPed();
-  for (let i = 0; i < 26; i++) randomSidewalkPickup();
+  for (let i = 0; i < (isTouch ? 18 : 30); i++) spawnTraffic(null);
+  for (let i = 0; i < (isTouch ? 28 : 50); i++) addPed();
+  for (let i = 0; i < 40; i++) randomSidewalkPickup();
   for (const b of bankLabels) { const s = textSprite('БАНК', '#ffd34d'); s.position.set(b.x, b.y, b.z); }
   // clouds
   const cl = [];
-  for (let i = 0; i < 28; i++) cl.push(bx(R(10, 24), 2.5, R(8, 16), '#ffffff', R(-180, 180), R(68, 78), R(-180, 180)));
+  for (let i = 0; i < 60; i++) cl.push(bx(R(12, 28), 3, R(8, 18), '#ffffff', R(-340, 340), R(88, 98), R(-340, 340)));
   cloudMesh = new THREE.Mesh(mergeBoxes(cl), new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.88, fog: false }));
   cloudMesh.position.set(W / 2, 0, D / 2); scene.add(cloudMesh);
   // block outline
@@ -1776,9 +1834,11 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const t0 = performance.now();
   if (started && !paused) { step(dt); perf.step = perf.step * 0.9 + (performance.now() - t0) * 0.1; }
-  else if (!started) { const a = now / 9000; const cx = nodeX(3.5), cz = nodeX(3.5); camera.position.set(cx + Math.cos(a) * 70, 48, cz + Math.sin(a) * 70); camera.lookAt(cx, 14, cz); }
+  else if (!started) { const a = now / 12000; const cx = nodeX(MID + 0.5), cz = nodeX(MID + 0.5); camera.position.set(cx + Math.cos(a) * 85, 78, cz + Math.sin(a) * 85); camera.lookAt(cx, 22, cz); }
   let built = 0;
-  for (const k of dirty) { buildChunk(k % CX, Math.floor(k / CX)); dirty.delete(k); if (++built >= 4) break; }
+  for (const k of dirty) { dirty.delete(k); if (!chunkBuilt[k]) continue; buildChunk(k % CX, Math.floor(k / CX)); if (++built >= 4) break; }
+  const sp = started ? (player.inCar ? player.inCar.pos : player.pos) : { x: nodeX(MID + 0.5), z: nodeX(MID + 0.5) };
+  streamChunks(sp.x, sp.z, VIEW + 16, built ? 1 : 3);
   renderer.render(scene, camera);
   perf.calls = renderer.info.render.calls; perf.tris = renderer.info.render.triangles;
 }
@@ -1807,7 +1867,16 @@ function step(dt) {
     }
   }
   trafficT -= dt;
-  if (trafficT <= 0) { trafficT = 2; if (cars.filter(c => c.ai === 'traffic').length < (isTouch ? 16 : 26)) spawnTraffic(player.inCar ? player.inCar.pos : player.pos); }
+  if (trafficT <= 0) {
+    trafficT = 1;
+    const tp = player.inCar ? player.inCar.pos : player.pos, far = (VIEW + 30) ** 2;
+    // keep the streets busy around the player: far-away traffic and people reappear nearby
+    for (const c of [...cars]) if (c.ai === 'traffic' && (c.pos.x - tp.x) ** 2 + (c.pos.z - tp.z) ** 2 > far) removeCar(c);
+    const nTraffic = cars.filter(c => c.ai === 'traffic').length;
+    for (let k = nTraffic; k < (isTouch ? 18 : 30) && k < nTraffic + 3; k++) spawnTraffic(tp);
+    for (const p of peds) if (p.state !== 'down' && (p.pos.x - tp.x) ** 2 + (p.pos.z - tp.z) ** 2 > far) placePed(p, tp);
+    for (let i = pickups.length - 1; i >= 0; i--) { const p = pickups[i]; if ((p.x - tp.x) ** 2 + (p.z - tp.z) ** 2 > 220 * 220) { scene.remove(p.m); pickups.splice(i, 1); randomSidewalkPickup(); } }
+  }
   updatePhysics(dt);
   for (const p of peds) updatePed(p, dt);
   managePolice(dt);
@@ -1818,7 +1887,7 @@ function step(dt) {
     p.m.rotation.y = p.t * 2; p.m.position.y = G + 0.7 + Math.sin(p.t * 3) * 0.15;
     if (Math.hypot(p.x - tp.x, p.z - tp.z) < (player.inCar ? 2.6 : 1.3) && Math.abs(player.pos.y - G) < 2.5) {
       scene.remove(p.m); pickups.splice(i, 1); addMoney(p.value);
-      if (pickups.length < 26) randomSidewalkPickup();
+      if (pickups.length < 40) randomSidewalkPickup();
     }
   }
   // tnt
@@ -1853,14 +1922,14 @@ function step(dt) {
 //  Boot
 // ------------------------------------------------------------
 function boot() {
-  for (let cz = 0; cz < CZ; cz++) for (let cx = 0; cx < CX; cx++) buildChunk(cx, cz);
+  streamChunks(SPAWN.x, SPAWN.z, isTouch ? 90 : 120, 1e9);
   for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) mapPixel(x, z);
   setupEntities();
   buildHotbar();
   human.g.position.copy(player.pos);
   updateCamera(0.016);
   // show the city behind the menu
-  camera.position.set(nodeX(3) - 30, 46, nodeX(3) + 40); camera.lookAt(nodeX(4), 12, nodeX(3));
+  camera.position.set(nodeX(MID) - 30, 78, nodeX(MID) + 40); camera.lookAt(nodeX(MID + 1), 22, nodeX(MID));
   requestAnimationFrame(frame);
   const play = $('#play'); play.disabled = false; play.textContent = 'ИГРАТЬ';
   if (best > 0) $('#best').textContent = 'Рекорд: $' + best.toLocaleString('ru-RU');
